@@ -50,6 +50,7 @@ class ReaderToolbarUi : public UiAppHost {
     // theme's full-screen lists. Uses panelTitle, itemCount and rowText.
     bool menuSheet = false;
     const char* panelSubtitle = nullptr;
+    const char* sheetTitle = nullptr;  // book title, set like a page title above panelTitle
   };
 
   struct Routed {

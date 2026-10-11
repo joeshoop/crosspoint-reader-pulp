@@ -192,17 +192,21 @@ void EpubReaderMenuActivity::buildScreen(UiScreen& screen) {
       static_cast<int16_t>(renderer.getScreenWidth() - (safe.x + safe.width)),
       static_cast<int16_t>(renderer.getScreenHeight() - (safe.y + safe.height)), static_cast<int16_t>(safe.x)});
 
-  // Progress summary where the old sub-header band sat.
-  std::string progressLine;
-  if (totalPages > 0) {
-    progressLine = std::string(tr(STR_CHAPTER_PREFIX)) + std::to_string(currentPage) + "/" +
-                   std::to_string(totalPages) + std::string(tr(STR_PAGES_SEPARATOR));
+  // Single-list themes match Settings: the reader sheet already shows progress.
+  const bool singleList = metrics.settingsSingleList;
+  if (!singleList) {
+    // Progress summary where the old sub-header band sat.
+    std::string progressLine;
+    if (totalPages > 0) {
+      progressLine = std::string(tr(STR_CHAPTER_PREFIX)) + std::to_string(currentPage) + "/" +
+                     std::to_string(totalPages) + std::string(tr(STR_PAGES_SEPARATOR));
+    }
+    progressLine += std::string(tr(STR_BOOK_PREFIX)) + std::to_string(bookProgressPercent) + "%";
+    const fui::Rect band = screen.takeTop(static_cast<int16_t>(metrics.tabBarHeight));
+    const int16_t pad = screen.theme().headerSidePadding;
+    screen.target().text(band.inset(fui::Insets{0, pad, 0, pad}), progressLine.c_str(), screen.theme().smallText);
+    screen.spacer(static_cast<int16_t>(metrics.verticalSpacing));
   }
-  progressLine += std::string(tr(STR_BOOK_PREFIX)) + std::to_string(bookProgressPercent) + "%";
-  const fui::Rect band = screen.takeTop(static_cast<int16_t>(metrics.tabBarHeight));
-  const int16_t pad = screen.theme().headerSidePadding;
-  screen.target().text(band.inset(fui::Insets{0, pad, 0, pad}), progressLine.c_str(), screen.theme().smallText);
-  screen.spacer(static_cast<int16_t>(metrics.verticalSpacing));
 
   // menuRowItems's labels/actionValue were set once in the constructor (see
   // buildMenuRowItems()); only rows with live values need refreshing here.
@@ -212,10 +216,13 @@ void EpubReaderMenuActivity::buildScreen(UiScreen& screen) {
       menuRowItems[i].value = I18N.get(orientationLabels[pendingOrientation]);
     } else if (action == MenuAction::AUTO_PAGE_TURN) {
       menuRowItems[i].value = pageTurnLabels[selectedPageTurnOption];
-    } else if (action == MenuAction::NIGHT_MODE) {
-      GUI.setCheckboxRow(menuRowItems[i], SETTINGS.screenInverted);
-    } else if (action == MenuAction::FRONTLIGHT) {
-      GUI.setCheckboxRow(menuRowItems[i], Frontlight.isOn());
+    } else if (action == MenuAction::NIGHT_MODE || action == MenuAction::FRONTLIGHT) {
+      const bool on = action == MenuAction::NIGHT_MODE ? SETTINGS.screenInverted != 0 : Frontlight.isOn();
+      if (singleList) {
+        menuRowItems[i].value = on ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
+      } else {
+        GUI.setCheckboxRow(menuRowItems[i], on);
+      }
     }
   }
 
@@ -229,6 +236,13 @@ void EpubReaderMenuActivity::buildScreen(UiScreen& screen) {
   // maxLines=2 also marks the style caller-owned (see textStyleUnset).
   props.labelText = screen.theme().smallText;
   props.labelText.maxLines = 2;
+  if (singleList) {
+    // Same row type as the single-list Settings screen.
+    props.labelText = screen.theme().bodyText;
+    props.labelText.maxLines = 1;
+    props.valueText = screen.theme().bodyText;
+    props.valueInset = 0;
+  }
   syncListViewport(screen, props);
   screen.list(props);
 }

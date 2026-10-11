@@ -23,17 +23,19 @@ constexpr ThemeMetrics values = {.batteryWidth = 15,
                                  .listRowRadius = 4,
                                  .listInset = 8,
                                  .listSidePadding = 16,
-                                 .listSelectionStyle = 0,  // replaced by the outline below
+                                 .listSelectionStyle = 4,  // fui::SelectionStyle::Highlighter
                                  .listScrollWidth = 2,
                                  .listScrollSide = 0,
                                  .listTitleBold = false,
-                                 .listSelectionBorder = 2,
+                                 .listSelectionBorder = 0,
                                  .bookStyleLists = true,
                                  .listOverflowCounts = true,
                                  .uiUsesReaderFont = true,
                                  .settingsSingleList = true,
                                  .settingsCycleValues = true,
                                  .readerMenuSheet = true,
+                                 .statusBarBookStyle = true,
+                                 .homeSideButtonHints = true,
                                  .headerSidePadding = 16,
                                  .headerUnderlineSize = 0,
                                  .headerTitleAlign = 1,  // centered
@@ -57,7 +59,7 @@ constexpr ThemeMetrics values = {.batteryWidth = 15,
                                  .homeMinimalMenu = true,
                                  .libraryBookShelf = true,
                                  .homeMenuTopOffset = 10,
-                                 .buttonHintsHeight = 18,
+                                 .buttonHintsHeight = 20,
                                  .sideButtonHintsWidth = 30,
                                  .progressBarHeight = 16,
                                  .progressBarMarginTop = 1,
@@ -108,4 +110,5 @@ class PulpTheme : public BaseTheme {
                       const std::function<UIIcon(int index)>& rowIcon) const override;
   void drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,
                        const char* btn4) const override;
+  void drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn) const override;
 };

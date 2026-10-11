@@ -127,6 +127,8 @@ EpdFontFamily notosans18FontFamily(&notosans18RegularFont, &notosans18BoldFont, 
 
 EpdFont smallFont(&notosans_8_regular);
 EpdFontFamily smallFontFamily(&smallFont);
+EpdFont hintPixelFont(&dogicapixel_8_regular);
+EpdFontFamily hintPixelFontFamily(&hintPixelFont);
 
 EpdFont ui10RegularFont(&ubuntu_10_regular);
 EpdFont ui10BoldFont(&ubuntu_10_bold);
@@ -420,6 +422,7 @@ void setupDisplayAndFonts(bool seamless = false) {
   renderer.insertFont(UI_10_FONT_ID, ui10FontFamily);
   renderer.insertFont(UI_12_FONT_ID, ui12FontFamily);
   renderer.insertFont(SMALL_FONT_ID, smallFontFamily);
+  renderer.insertFont(HINT_PIXEL_FONT_ID, hintPixelFontFamily);
 
   // Discover and load SD card fonts
   sdFontSystem.begin(renderer);

@@ -809,10 +809,20 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
     // Right aligned text for progress counter
     char progressStr[32];
 
-    // Draw the estimate marker separately so it can use the next UI font size.
-    const bool showEstimate = pageCountEstimated && sb.showChapterPageCount;
+    // Book style: just the pages left in the chapter, set like the running title.
+    const bool bookStyle = metrics.statusBarBookStyle && sb.showChapterPageCount;
+    const int progressFontId = bookStyle ? SETTINGS.getReaderFontId() : SMALL_FONT_ID;
+    const EpdFontFamily::Style progressStyle = bookStyle ? EpdFontFamily::ITALIC : EpdFontFamily::REGULAR;
+    const int progressY =
+        bookStyle ? textY + renderer.getFontAscenderSize(SMALL_FONT_ID) - renderer.getFontAscenderSize(progressFontId)
+                  : textY;
 
-    if (sb.showBookProgressPercent && sb.showChapterPageCount) {
+    // Draw the estimate marker separately so it can use the next UI font size.
+    const bool showEstimate = pageCountEstimated && sb.showChapterPageCount && !bookStyle;
+
+    if (bookStyle) {
+      snprintf(progressStr, sizeof(progressStr), "%d", std::max(0, pageCount - currentPage));
+    } else if (sb.showBookProgressPercent && sb.showChapterPageCount) {
       snprintf(progressStr, sizeof(progressStr), "%d/%d  %.0f%%", currentPage, pageCount, bookProgress);
     } else if (sb.showBookProgressPercent) {
       snprintf(progressStr, sizeof(progressStr), "%.0f%%", bookProgress);
@@ -820,7 +830,7 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
       snprintf(progressStr, sizeof(progressStr), "%d/%d", currentPage, pageCount);
     }
 
-    int progressTextWidth = renderer.getTextWidth(SMALL_FONT_ID, progressStr);
+    int progressTextWidth = renderer.getTextWidth(progressFontId, progressStr, progressStyle);
     const int estimateWidth = showEstimate ? renderer.getTextWidth(UI_10_FONT_ID, "~") : 0;
     constexpr int estimateGap = 2;
     const int estimateSpacing = showEstimate ? estimateGap : 0;
@@ -829,7 +839,8 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
       const int estimateY = textY + (renderer.getLineHeight(SMALL_FONT_ID) - renderer.getLineHeight(UI_10_FONT_ID)) / 2;
       renderer.drawText(UI_10_FONT_ID, progressX, estimateY, "~");
     }
-    renderer.drawText(SMALL_FONT_ID, progressX + estimateWidth + estimateSpacing, textY, progressStr);
+    renderer.drawText(progressFontId, progressX + estimateWidth + estimateSpacing, progressY, progressStr, true,
+                      progressStyle);
 
     rightClusterWidth += estimateWidth + estimateSpacing + progressTextWidth;
   }
@@ -915,22 +926,32 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
     int titleMarginLeftAdjusted = std::max(titleMarginLeft, titleMarginRight);
     int availableTitleSpace = rendererableScreenWidth - 2 * titleMarginLeftAdjusted;
 
+    int titleFontId = SMALL_FONT_ID;
+    EpdFontFamily::Style titleStyle = EpdFontFamily::REGULAR;
+    int titleY = textY;
+    if (metrics.statusBarBookStyle) {
+      // Share the progress text's baseline.
+      titleFontId = SETTINGS.getReaderFontId();
+      titleStyle = EpdFontFamily::ITALIC;
+      titleY = textY + renderer.getFontAscenderSize(SMALL_FONT_ID) - renderer.getFontAscenderSize(titleFontId);
+    }
+
     int titleWidth;
-    titleWidth = renderer.getTextWidth(SMALL_FONT_ID, title.c_str());
+    titleWidth = renderer.getTextWidth(titleFontId, title.c_str(), titleStyle);
     if (titleWidth > availableTitleSpace) {
       // Not enough space to center on the screen, center it within the remaining space instead
       availableTitleSpace = rendererableScreenWidth - titleMarginLeft - titleMarginRight;
       titleMarginLeftAdjusted = titleMarginLeft;
     }
     if (titleWidth > availableTitleSpace) {
-      title = renderer.truncatedText(SMALL_FONT_ID, title.c_str(), availableTitleSpace);
-      titleWidth = renderer.getTextWidth(SMALL_FONT_ID, title.c_str());
+      title = renderer.truncatedText(titleFontId, title.c_str(), availableTitleSpace, titleStyle);
+      titleWidth = renderer.getTextWidth(titleFontId, title.c_str(), titleStyle);
     }
 
-    renderer.drawText(SMALL_FONT_ID,
+    renderer.drawText(titleFontId,
                       titleMarginLeftAdjusted + metrics.statusBarHorizontalMargin + orientedMarginLeft +
                           (availableTitleSpace - titleWidth) / 2,
-                      textY, title.c_str());
+                      titleY, title.c_str(), true, titleStyle);
   }
 }
 

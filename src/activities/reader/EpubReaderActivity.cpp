@@ -2561,9 +2561,18 @@ void EpubReaderActivity::renderOverlay() {
     const float chapterProgress =
         pageCount > 0 ? static_cast<float>(section->currentPage + 1) / static_cast<float>(pageCount) : 0.0f;
     const float bookProgress = epub->calculateProgress(currentSpineIndex, chapterProgress);
-    pageInfo = std::to_string(section->currentPage + 1) + " / " + std::to_string(pageCount) + " \u00b7 " +
-               std::to_string(clampPercent(static_cast<int>(bookProgress * 100.0f + 0.5f))) + "%";
+    const int pagesLeft = std::max(0, pageCount - (section->currentPage + 1));
+    char progress[48];
+    if (pagesLeft == 0) {
+      snprintf(progress, sizeof(progress), "%s", tr(STR_LAST_PAGE_IN_CHAPTER));
+    } else if (pagesLeft == 1) {
+      snprintf(progress, sizeof(progress), "%s", tr(STR_ONE_PAGE_LEFT_IN_CHAPTER));
+    } else {
+      snprintf(progress, sizeof(progress), tr(STR_PAGES_LEFT_IN_CHAPTER), pagesLeft);
+    }
+    pageInfo = progress;
     model.menuSheet = true;
+    model.sheetTitle = epub->getTitle().c_str();
     model.panelTitle = chapterTitle.c_str();
     model.panelSubtitle = pageInfo.c_str();
     model.itemCount = kMenuSheetRowCount;

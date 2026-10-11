@@ -370,6 +370,28 @@ void TextSettingsActivity::drawFooter() {
 void TextSettingsActivity::render(RenderLock&& lock) {
   if (optionPopup_.processRender(renderer, mappedInput)) return;  // picker draws over everything
   UiListActivity::render(std::move(lock));
+  if (SETTINGS.textAntiAliasing) renderPreviewGrayscale();
+}
+
+// Anti-aliasing as the reader draws it: gray planes for the preview text over
+// the 1-bit frame just displayed. Only the reader's 2-bit fonts add gray ink.
+void TextSettingsActivity::renderPreviewGrayscale() {
+  if (!renderer.storeBwBuffer()) return;
+  const GfxRenderer::RenderMode planes[2] = {GfxRenderer::GRAYSCALE_LSB, GfxRenderer::GRAYSCALE_MSB};
+  for (const auto mode : planes) {
+    renderer.clearScreen(0x00);
+    renderer.setRenderMode(mode);
+    textsettings::renderPreview(renderer, previewLayout_, metrics_.previewPadding, metrics_.verticalSpacing,
+                                afterHeader, previewHeight, nullptr, nullptr);
+    if (mode == GfxRenderer::GRAYSCALE_LSB) {
+      renderer.copyGrayscaleLsbBuffers();
+    } else {
+      renderer.copyGrayscaleMsbBuffers();
+    }
+  }
+  renderer.displayGrayBuffer();
+  renderer.setRenderMode(GfxRenderer::BW);
+  renderer.restoreBwBuffer();
 }
 
 // Font switching runs on the main task from loop(), which deliberately holds no
@@ -599,8 +621,8 @@ bool TextSettingsActivity::focusedRowHasNoPreview() const {
   } else if (tab_ != Tab::Style) {
     return false;
   }
-  const StyleRow row = static_cast<StyleRow>(styleRow);
-  return row == StyleRow::Hyphenation || row == StyleRow::EmbeddedStyle || row == StyleRow::AntiAliasing;
+  // The preview lays out with hyphenation and draws anti-aliasing; only book CSS is missing.
+  return static_cast<StyleRow>(styleRow) == StyleRow::EmbeddedStyle;
 }
 
 void TextSettingsActivity::switchTab(const int direction) {

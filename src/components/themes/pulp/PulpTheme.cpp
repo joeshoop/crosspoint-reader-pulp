@@ -1,5 +1,6 @@
 #include "PulpTheme.h"
 
+#include <FreeInkUI.h>
 #include <GfxRenderer.h>
 #include <HalGPIO.h>
 #include <HalStorage.h>
@@ -15,19 +16,24 @@
 #include "fontIds.h"
 
 namespace {
-constexpr int kOutline = 2;  // selection outline and home card frame
-constexpr int kOutlineRadius = 4;
 constexpr int kCoverInset = 4;  // frame to cover: 2px outline + 2px white margin
 constexpr int kCoverRadius = 2;
+// The cover sits on its book: page edges show below and to the right, and the
+// book casts a soft shadow.
+constexpr int kBookDepth = 6;
+constexpr int kBookShadow = 4;
+constexpr int kBookExtra = kBookDepth + kBookShadow;
 constexpr int kMenuMaxWidth = 360;  // until a cover has set the width
 constexpr int kMenuPaddingY = 8;
 constexpr int kHomeMenuRows = 2;    // Books, Settings (homeMinimalMenu)
-constexpr int kHintClearance = 12;  // air between the home menu and the button hints
+constexpr int kHintClearance = 22;  // air between the home menu and the button hints
 constexpr int kHintGroupWidth = 176;
 constexpr int kHintGap = 12;
-constexpr int kHintRadius = 8;
+constexpr int kHintRadius = 4;
 constexpr int kHintPaddingX = 10;
-constexpr int kGuideFontId = SMALL_FONT_ID;
+constexpr int kGuideFontId = HINT_PIXEL_FONT_ID;
+// Baseline height above the panel edge; the X4 bezel hides the bottom rows.
+constexpr int kHintBaselineInset = 9;
 
 // Cover width from the last parsed thumbnail; kept so a home redraw from the
 // stored cover buffer can place the frame without reopening the BMP.
@@ -40,7 +46,33 @@ std::string upperAscii(const char* text) {
   }
   return out;
 }
+// Shadow, back board and page edges behind a cover at (x, y, w, h), painted
+// back to front so each nearer layer hides the outline of the one behind.
+// The cover then goes on top.
+void drawBookBody(const GfxRenderer& renderer, const int x, const int y, const int w, const int h) {
+  renderer.fillRectDither(x + kBookDepth + kBookShadow, y + kBookDepth + kBookShadow, w, h, Color::LightGray);
+  for (int k = kBookDepth; k > 0; k -= 2) {
+    renderer.fillRect(x + k, y + k, w, h, false);
+    renderer.drawRoundedRect(x + k, y + k, w, h, 1, kCoverRadius, true);
+  }
+}
 }  // namespace
+
+// The fui list Highlighter selection's stroke, behind one line of text
+// whose line box starts at lineTop. Drawn before the text.
+static void drawHighlight(const GfxRenderer& renderer, const int fontId, const int textX, const int lineTop,
+                   const std::string& text) {
+  const int lineHeight = renderer.getLineHeight(fontId);
+  const int overhang = lineHeight / 4;
+  const freeink::ui::Rect area{static_cast<int16_t>(textX - overhang), static_cast<int16_t>(lineTop + lineHeight * 2 / 5),
+                               static_cast<int16_t>(renderer.getTextWidth(fontId, text.c_str()) + 2 * overhang),
+                               static_cast<int16_t>(lineHeight / 2)};
+  uint32_t seed = 2166136261u;
+  for (const char c : text) seed = (seed ^ static_cast<uint8_t>(c)) * 16777619u;
+  freeink::ui::highlighterStroke(area, seed, [&renderer](const freeink::ui::Rect column) {
+    renderer.fillRectDither(column.x, column.y, column.width, column.height, Color::LightGray);
+  });
+}
 
 void PulpTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
                                     const int selectorIndex, bool& coverRendered, bool& coverBufferStored,
@@ -73,11 +105,12 @@ void PulpTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
       if (Storage.openFileForRead("HOME", thumbPath, file)) {
         Bitmap bitmap(file);
         if (bitmap.parseHeaders() == BmpReaderError::Ok) {
-          coverWidth = std::min(bitmap.getWidth(), rect.width - 2 * kCoverInset);
-          drawCoverThumbFill(renderer, bitmap,
-                             Rect{rect.x + (rect.width - coverWidth) / 2, coverY, coverWidth, coverHeight});
-          renderer.maskRoundedRectOutsideCorners(rect.x + (rect.width - coverWidth) / 2, coverY, coverWidth,
-                                                 coverHeight, kCoverRadius, Color::White);
+          coverWidth = std::min(bitmap.getWidth(), rect.width - 2 * kCoverInset - kBookExtra);
+          const int x = rect.x + (rect.width - coverWidth - kBookExtra) / 2;
+          drawBookBody(renderer, x, coverY, coverWidth, coverHeight);
+          drawCoverThumbFill(renderer, bitmap, Rect{x, coverY, coverWidth, coverHeight});
+          renderer.maskRoundedRectOutsideCorners(x, coverY, coverWidth, coverHeight, kCoverRadius, Color::White);
+          renderer.drawRoundedRect(x, coverY, coverWidth, coverHeight, 1, kCoverRadius, true);
           hasCover = true;
         }
         file.close();
@@ -86,9 +119,10 @@ void PulpTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
 
     if (!hasCover) {
       // Plain bound book: gray board with the title and author set on it.
-      const int x = rect.x + (rect.width - coverWidth) / 2;
+      const int x = rect.x + (rect.width - coverWidth - kBookExtra) / 2;
+      drawBookBody(renderer, x, coverY, coverWidth, coverHeight);
       renderer.fillRectDither(x, coverY, coverWidth, coverHeight, Color::LightGray);
-      renderer.maskRoundedRectOutsideCorners(x, coverY, coverWidth, coverHeight, kCoverRadius, Color::White);
+      renderer.drawRoundedRect(x, coverY, coverWidth, coverHeight, 1, kCoverRadius, true);
       const int textX = x + 16;
       const int textWidth = coverWidth - 32;
       const int lineHeight = renderer.getLineHeight(fontId);
@@ -105,15 +139,15 @@ void PulpTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
   }
 
   // Drawn after the snapshot so a restored buffer starts without the frame.
-  const int labelTop = coverY + coverHeight;
+  const int labelTop = coverY + coverHeight + kBookExtra;
   const int labelHeight = rect.y + rect.height - labelTop;
   const std::string label =
       renderer.truncatedText(fontId, tr(STR_CONTINUE_READING), cardWidth - 2 * kHintPaddingX, EpdFontFamily::REGULAR);
-  renderer.drawCenteredText(fontId, labelTop + (labelHeight - renderer.getCenteringHeight(fontId)) / 2, label.c_str());
-
   if (selectorIndex == 0) {
-    renderer.drawRoundedRect(cardX, rect.y, cardWidth, rect.height, kOutline, kOutlineRadius, true);
+    const int labelX = (renderer.getScreenWidth() - renderer.getTextWidth(fontId, label.c_str())) / 2;
+    drawHighlight(renderer, fontId, labelX, labelTop + (labelHeight - renderer.getLineHeight(fontId)) / 2, label);
   }
+  renderer.drawCenteredText(fontId, labelTop + (labelHeight - renderer.getCenteringHeight(fontId)) / 2, label.c_str());
 }
 
 int PulpTheme::getMenuRowHeight(const GfxRenderer& renderer) const {
@@ -131,7 +165,7 @@ int PulpTheme::homeCoverTileHeight(const GfxRenderer& renderer) const {
 
 // The cover takes the tile minus its inset and a menu-row-high label band.
 int PulpTheme::homeCoverThumbHeight(const GfxRenderer& renderer) const {
-  return homeCoverTileHeight(renderer) - kCoverInset - getMenuRowHeight(renderer);
+  return homeCoverTileHeight(renderer) - kCoverInset - kBookExtra - getMenuRowHeight(renderer);
 }
 
 void PulpTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
@@ -154,10 +188,11 @@ void PulpTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount
     const std::string text =
         renderer.truncatedText(fontId, label.c_str(), rowWidth - 2 * PulpMetrics::values.listSidePadding);
     const int textWidth = renderer.getTextWidth(fontId, text.c_str());
-    renderer.drawText(fontId, rowX + (rowWidth - textWidth) / 2, rowY + textOffsetY, text.c_str());
+    const int textX = rowX + (rowWidth - textWidth) / 2;
     if (i == selectedIndex) {
-      renderer.drawRoundedRect(rowX, rowY, rowWidth, rowHeight, kOutline, kOutlineRadius, true);
+      drawHighlight(renderer, fontId, textX, rowY + (rowHeight - renderer.getLineHeight(fontId)) / 2, text);
     }
+    renderer.drawText(fontId, textX, rowY + textOffsetY, text.c_str());
   }
 }
 
@@ -185,7 +220,7 @@ void PulpTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const c
     return;
   }
 
-  const int textY = hintY + (hintHeight - renderer.getLineHeight(kGuideFontId)) / 2;
+  const int textY = pageHeight - kHintBaselineInset - renderer.getFontAscenderSize(kGuideFontId);
   // Pairs are the physical buttons under each group: back/select, then up/down.
   const char* labels[4] = {btn1, btn2, btn3, btn4};
   for (int group = 0; group < 2; ++group) {
@@ -208,4 +243,42 @@ void PulpTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const c
   }
 
   renderer.setOrientation(origOrientation);
+}
+
+// One tab open at the right edge spanning the X4's two stacked side buttons,
+// set like the bottom hints: Up reads from the top end, Down from the bottom.
+// Edge-button boards keep the base layout.
+void PulpTheme::drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn) const {
+  if (gpio.hasTouch()) return;
+  if (gpio.hasEdgeSideButtons()) {
+    BaseTheme::drawSideButtonHints(renderer, topBtn, bottomBtn);
+    return;
+  }
+  // Physical button span, as in BaseTheme.
+  constexpr int kTabTop = 345;
+  constexpr int kTabHeight = 160;
+  constexpr int kTextInset = 8;
+  const int tabWidth = PulpMetrics::values.buttonHintsHeight;
+  const int screenW = renderer.getScreenWidth();
+  const int screenH = renderer.getScreenHeight();
+  const int x = screenW - tabWidth;
+  renderer.fillRect(x, kTabTop, tabWidth, kTabHeight, false);
+  renderer.drawRoundedRect(x, kTabTop, tabWidth, kTabHeight, 1, kHintRadius, true, false, true, false, true);
+  renderer.fillRect(screenW - 1, kTabTop + 1, 1, kTabHeight - 2, false);
+
+  // The renderer only rotates text clockwise (reading upward); flipping the
+  // orientation turns that into text reading downward, glyph tops to the edge.
+  auto& flipped = const_cast<GfxRenderer&>(renderer);
+  const GfxRenderer::Orientation origOrientation = renderer.getOrientation();
+  const int textH = renderer.getTextHeight(kGuideFontId);
+  const int columnX = x + (tabWidth - textH) / 2;
+  const std::string labels[2] = {upperAscii(topBtn), upperAscii(bottomBtn)};
+  flipped.setOrientation(GfxRenderer::Orientation::PortraitInverted);
+  for (int i = 0; i < 2; ++i) {
+    if (labels[i].empty()) continue;
+    const int textW = renderer.getTextWidth(kGuideFontId, labels[i].c_str());
+    const int top = i == 0 ? kTabTop + kTextInset : kTabTop + kTabHeight - kTextInset - textW;
+    renderer.drawTextRotated90CW(kGuideFontId, screenW - columnX - textH, screenH - 1 - top, labels[i].c_str());
+  }
+  flipped.setOrientation(origOrientation);
 }

@@ -85,6 +85,7 @@ class TextSettingsActivity final : public UiTabListActivity {
   const char* confirmLabelText() const;
   // True when the focused list row is a setting the preview cannot reflect.
   bool focusedRowHasNoPreview() const;
+  void renderPreviewGrayscale();
   void switchTab(int direction = 1);
 
   // Row storage for the active tab: rowItems_ (label/actionValue) is

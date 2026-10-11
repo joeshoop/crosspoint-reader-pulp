@@ -40,6 +40,8 @@ constexpr int kPanelHeightPercent = 62;
 constexpr int kPanelHeightMaxPercent = 72;
 // Landscape has less vertical room; leave a narrow page strip for tap-to-dismiss.
 constexpr int kLandscapePanelHeightPercent = 88;
+// Menu sheet: lines the book title may wrap to before it truncates.
+constexpr uint8_t kSheetTitleMaxLines = 4;
 }  // namespace
 
 ReaderToolbarUi::ReaderToolbarUi(GfxRenderer& renderer) : UiAppHost(renderer) {}
@@ -344,8 +346,24 @@ void ReaderToolbarUi::buildMenuSheet(UiScreen& screen) {
   // Heading rows match the full-screen lists' row height; the sheet fits them
   // and every menu row exactly.
   const int16_t rowH = static_cast<int16_t>(metrics.listRowHeight);
-  const int headingRows = model_.panelSubtitle ? 2 : 1;
-  screen.sheet(sheetProps, static_cast<int16_t>(sheetProps.grabberInset + (headingRows + count) * rowH +
+  const int headingRows = (model_.panelTitle ? 1 : 0) + (model_.panelSubtitle ? 1 : 0);
+  const fui::Insets headingInset{0, static_cast<int16_t>(metrics.contentSidePadding), 0,
+                                 static_cast<int16_t>(metrics.contentSidePadding)};
+
+  // The book title wraps to kSheetTitleMaxLines before it truncates; the
+  // first line takes a full row, each further line adds one line height.
+  fui::TextStyle titleStyle = tokens.titleText;  // the bold title full-screen pages carry
+  titleStyle.align = fui::TextAlign::Center;
+  titleStyle.maxLines = kSheetTitleMaxLines;
+  int16_t titleH = 0;
+  if (model_.sheetTitle) {
+    const fui::Rect measureRect = screen.frame().safeRect().inset(headingInset);
+    int lines = 0;
+    fui::layoutText(screen.target(), measureRect, model_.sheetTitle, titleStyle,
+                    [&lines](const char*, fui::Rect) { ++lines; });
+    titleH = static_cast<int16_t>(rowH + std::max(0, lines - 1) * screen.target().lineHeight(titleStyle.font));
+  }
+  screen.sheet(sheetProps, static_cast<int16_t>(sheetProps.grabberInset + titleH + (headingRows + count) * rowH +
                                                 metrics.verticalSpacing));
 
   fui::TextStyle headingStyle = tokens.bodyText;
@@ -353,8 +371,9 @@ void ReaderToolbarUi::buildMenuSheet(UiScreen& screen) {
   headingStyle.italic = true;
   headingStyle.align = fui::TextAlign::Center;
   headingStyle.maxLines = 1;
-  const fui::Insets headingInset{0, static_cast<int16_t>(metrics.contentSidePadding), 0,
-                                 static_cast<int16_t>(metrics.contentSidePadding)};
+  if (model_.sheetTitle) {
+    screen.target().text(screen.takeTop(titleH).inset(headingInset), model_.sheetTitle, titleStyle);
+  }
   if (model_.panelTitle) screen.target().text(screen.takeTop(rowH).inset(headingInset), model_.panelTitle, headingStyle);
   if (model_.panelSubtitle) {
     fui::TextStyle subtitleStyle = headingStyle;

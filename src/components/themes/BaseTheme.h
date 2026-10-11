@@ -49,7 +49,7 @@ struct ThemeMetrics {
   int listRowRadius;       // row corner radius (RoundedRaff cards, Lyra pill)
   int listInset;           // horizontal inset of the whole list band
   int listSidePadding;     // text inset within a row
-  int listSelectionStyle;  // 0=invert fill, 1=light pill, 2=underline, 3=triangle (fui::SelectionStyle order)
+  int listSelectionStyle;  // 0=invert fill, 1=light pill, 2=underline, 3=triangle, 4=highlighter (fui::SelectionStyle order)
   int listScrollWidth;     // scroll indicator thickness
   int listScrollSide;      // 0 = right edge, 1 = left edge
   bool listTitleBold;      // bold row titles (RoundedRaff)
@@ -70,6 +70,11 @@ struct ThemeMetrics {
   // Select in a book opens a short menu sheet over the page instead of the
   // reader menu style's toolbar or full-screen list (Pulp).
   bool readerMenuSheet = false;
+  // Status bar like a book's running foot: pages left ("6", not "25/31") and the
+  // chapter title in the reader font's italic (Pulp).
+  bool statusBarBookStyle = false;
+  // Home labels the side buttons as well as the front ones (Pulp).
+  bool homeSideButtonHints = false;
   // FreeInkUI header shape, same contract as the list fields above.
   int headerSidePadding;    // title text inset
   int headerUnderlineSize;  // bottom rule thickness (Lyra), 0 = none
