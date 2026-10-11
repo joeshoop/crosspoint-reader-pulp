@@ -39,11 +39,15 @@ constexpr UIIcon menuIcons[NetworkModeSelectionActivity::MENU_ITEM_COUNT] = {
 NetworkModeSelectionActivity::NetworkModeSelectionActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
     : UiListActivity("NetworkModeSelection", renderer, mappedInput) {
   // Entirely static, so built once here rather than every buildScreen() call.
+  // Book-styled themes list the modes as plain rows.
+  const bool plainRows = UITheme::getInstance().getMetrics().bookStyleLists;
   for (int i = 0; i < MENU_ITEM_COUNT; i++) {
     fui::ListItem item;
     item.label = I18N.get(menuItems[i]);
-    item.subtitle = I18N.get(menuDescs[i]);
-    item.icon = listIconFor(menuIcons[i], 32);  // subtitle rows carry the larger icon
+    if (!plainRows) {
+      item.subtitle = I18N.get(menuDescs[i]);
+      item.icon = listIconFor(menuIcons[i], 32);  // subtitle rows carry the larger icon
+    }
     item.actionValue = static_cast<int16_t>(i);
     rowItems_[i] = item;
   }
@@ -67,7 +71,7 @@ void NetworkModeSelectionActivity::buildScreen(UiScreen& screen) {
   // Content below the GUI.drawHeader band, above the button hints.
   screen.setContentMarginFromScreen(fui::Insets{static_cast<int16_t>(metrics.topPadding + metrics.headerHeight), 0,
                                                 static_cast<int16_t>(metrics.buttonHintsHeight), 0});
-  screen.spacer(static_cast<int16_t>(metrics.verticalSpacing));
+  if (!metrics.bookStyleLists) screen.spacer(static_cast<int16_t>(metrics.verticalSpacing));
 
   // rowItems_ was built once in the constructor and is reused here on every
   // repaint.

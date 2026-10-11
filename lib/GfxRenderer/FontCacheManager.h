@@ -31,6 +31,8 @@ class FontCacheManager {
 
   // Scan-mode API: called by GfxRenderer::drawText() during scan pass
   bool isScanning() const;
+  // True while a PrewarmScope (a reader page render) owns the SD glyph cache.
+  bool inPrewarmScope() const { return prewarmScopeActive_; }
   void recordText(const char* text, int fontId, EpdFontFamily::Style style);
 
   // The FontDecompressor pointer, needed by GfxRenderer::getGlyphBitmap()
@@ -62,6 +64,7 @@ class FontCacheManager {
 
   enum class ScanMode : uint8_t { None, Scanning };
   ScanMode scanMode_ = ScanMode::None;
+  bool prewarmScopeActive_ = false;
 
   // A render pass touches at most a handful of font ids. Codepoints are packed
   // with a compact font slot and resolved style, then grouped for prewarming.

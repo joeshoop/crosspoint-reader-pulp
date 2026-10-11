@@ -858,12 +858,18 @@ void WifiSelectionActivity::render(RenderLock&&) {
   // drawHeader self-insets by the board's viewable margins, so it takes a
   // full-width rect (the contract every other caller uses). Passing the already
   // safe-inset `screen` here double-inset the header on bezel panels (EEGO A4).
-  GUI.drawHeader(renderer, Rect{0, screen.y + metrics.topPadding, renderer.getScreenWidth(), metrics.headerHeight},
-                 tr(STR_WIFI_NETWORKS), countStr);
-  GUI.drawSubHeader(
-      renderer,
-      Rect{screen.x, screen.y + metrics.topPadding + metrics.headerHeight, screen.width, metrics.tabBarHeight},
-      cachedMacAddress.c_str());
+  // Book-styled themes title the list like a page, with no count or MAC band.
+  if (metrics.bookStyleLists) {
+    GUI.drawHeader(renderer, Rect{0, screen.y + metrics.topPadding, renderer.getScreenWidth(), metrics.headerHeight},
+                   tr(STR_JOIN_NETWORK), nullptr);
+  } else {
+    GUI.drawHeader(renderer, Rect{0, screen.y + metrics.topPadding, renderer.getScreenWidth(), metrics.headerHeight},
+                   tr(STR_WIFI_NETWORKS), countStr);
+    GUI.drawSubHeader(
+        renderer,
+        Rect{screen.x, screen.y + metrics.topPadding + metrics.headerHeight, screen.width, metrics.tabBarHeight},
+        cachedMacAddress.c_str());
+  }
 
   switch (state) {
     case WifiSelectionState::AUTO_CONNECTING:
@@ -909,10 +915,10 @@ void WifiSelectionActivity::listScreen(UiScreen& screen, void* user) {
 void WifiSelectionActivity::buildListScreen(UiScreen& screen) {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const Rect safe = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
-  // Content below the header + MAC sub-band, above the legend line.
+  // Content below the header + MAC sub-band (none in book-styled themes), above the legend line.
+  const int subBand = metrics.bookStyleLists ? 0 : metrics.tabBarHeight + metrics.verticalSpacing;
   screen.setContentMarginFromScreen(fui::Insets{
-      static_cast<int16_t>(safe.y + metrics.topPadding + metrics.headerHeight + metrics.tabBarHeight +
-                           metrics.verticalSpacing),
+      static_cast<int16_t>(safe.y + metrics.topPadding + metrics.headerHeight + subBand),
       static_cast<int16_t>(renderer.getScreenWidth() - (safe.x + safe.width)),
       static_cast<int16_t>(renderer.getScreenHeight() - (safe.y + safe.height) + metrics.verticalSpacing * 2),
       static_cast<int16_t>(safe.x)});

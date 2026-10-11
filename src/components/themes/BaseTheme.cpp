@@ -326,7 +326,7 @@ void BaseTheme::applyHeaderStatus(const GfxRenderer& renderer, freeink::ui::Head
   // (passive frames), while the uiScale FONT_SMALL is for list subtitles.
   status.battery.text.font = freeink::ui::GfxRendererTarget::FONT_LABEL;
 
-  status.showBattery = true;
+  status.showBattery = metrics.headerShowsBattery;
   const uint16_t percentage = powerManager.getBatteryPercentage();
   status.battery.percent = static_cast<uint8_t>(percentage > 100 ? 100 : percentage);
   status.battery.charging = gpio.isUsbConnected();

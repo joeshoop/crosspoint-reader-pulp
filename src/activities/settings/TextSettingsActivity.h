@@ -54,6 +54,20 @@ class TextSettingsActivity final : public UiTabListActivity {
   void drawFooter() override;
   bool handleButtons() override;
   bool handleCustomInput() override;
+  void navigateButtons() override;
+  bool rowStartsSection(int row) const override { return row == 0 || row == kLayoutStart || row == kStyleStart; }
+
+  // Single-list themes (settingsSingleList): no tab bar; one list of Font,
+  // Size, then the Layout and Style rows, each stepping its value in place.
+  static bool usesSingleList();
+  static constexpr int kFontRow = 0;
+  static constexpr int kSizeRow = 1;
+  static constexpr int kLayoutStart = 2;
+  static constexpr int kStyleStart = kLayoutStart + static_cast<int>(LayoutRow::Count);
+  static constexpr int kSingleListCount = kStyleStart + static_cast<int>(StyleRow::Count);
+  void activateSingleListRow(int row);
+  void cycleLayoutRow(int row);
+  std::string singleListValueText(int row) const;
 
   void applyFamily(int listIndex);
   void applySize(int listIndex);

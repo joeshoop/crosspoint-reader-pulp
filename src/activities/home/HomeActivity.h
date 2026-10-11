@@ -39,7 +39,8 @@ class HomeActivity final : public Activity {
   const bool cleanInitialRefresh;
 
   // Convert HomeMenuItem to menu index (used in onEnter)
-  static int menuItemToIndex(HomeMenuItem item, bool hasOpdsUrl) {
+  static int menuItemToIndex(HomeMenuItem item, bool hasOpdsUrl, bool minimal) {
+    if (minimal) return item == HomeMenuItem::SETTINGS_MENU ? 1 : 0;
     int i = 0;
     if (item == HomeMenuItem::FILE_BROWSER) return i;
     ++i;
@@ -54,7 +55,9 @@ class HomeActivity final : public Activity {
   }
 
   // Convert menu index to HomeMenuItem (used in loop)
-  static HomeMenuItem indexToMenuItem(int idx, bool hasOpdsUrl) {
+  static HomeMenuItem indexToMenuItem(int idx, bool hasOpdsUrl, bool minimal) {
+    // Minimal menu (homeMinimalMenu): Browse opens the Library, then Settings.
+    if (minimal) return idx == 0 ? HomeMenuItem::LIBRARY : idx == 1 ? HomeMenuItem::SETTINGS_MENU : HomeMenuItem::NONE;
     int i = 0;
     if (idx == i++) return HomeMenuItem::FILE_BROWSER;
     if (idx == i++) return HomeMenuItem::LIBRARY;
@@ -72,7 +75,8 @@ class HomeActivity final : public Activity {
   void onPluginsOpen();
 
   int getMenuItemCount() const;
-  bool storeCoverBuffer();    // Store frame buffer for cover image
+  bool storeCoverBuffer();
+  int coverTileHeight() const;    // Store frame buffer for cover image
   bool restoreCoverBuffer();  // Restore frame buffer from stored cover
   void freeCoverBuffer();     // Free the stored cover buffer
   void loadRecentBooks(int maxBooks);

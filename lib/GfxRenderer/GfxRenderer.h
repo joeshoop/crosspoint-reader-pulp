@@ -121,6 +121,10 @@ class GfxRenderer {
   // re-drawing resident glyphs is a RAM-only subset check. No-op for built-in
   // fonts.
   void ensureSdGlyphsResident(int fontId, const char* text, EpdFontFamily::Style style, bool metadataOnly) const;
+  // UI text drawn directly in an SD font (themes that use the reader font for
+  // menus) needs the same batch load; reader pages are covered by their
+  // PrewarmScope instead.
+  bool needsSdGlyphLoad(int requestedFontId, int resolvedFontId) const;
 
   void renderChar(const EpdFontFamily& fontFamily, uint32_t cp, int* x, int* y, bool pixelState,
                   EpdFontFamily::Style style) const;
@@ -346,6 +350,9 @@ class GfxRenderer {
                       TextMeasureMode mode = TextMeasureMode::Layout) const;
   int getFontAscenderSize(int fontId) const;
   int getLineHeight(int fontId) const;
+  /// Height to center one line of text on: the glyph box (ascender + descender)
+  /// when the font's line height adds a gap below it, else the line height.
+  int getCenteringHeight(int fontId) const;
   int getLineHeight(int fontId, float compression) const;
   std::string truncatedText(int fontId, const char* text, int maxWidth,
                             EpdFontFamily::Style style = EpdFontFamily::REGULAR) const;

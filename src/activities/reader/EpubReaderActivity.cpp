@@ -41,6 +41,7 @@
 #include "ProgressMapper.h"
 #include "QrDisplayActivity.h"
 #include "ReaderActivity.h"
+#include "ReaderExcerpt.h"
 #include "ReaderFontSizes.h"
 #include "ReaderToolbarUi.h"
 #include "ReaderUtils.h"
@@ -315,8 +316,9 @@ void EpubReaderActivity::openReaderMenu() {
     // go-to-percent... cancelled back to the menu), so the framebuffer holds
     // that screen, not the page: re-render the page and let renderBook() put
     // the toolbar on top. The in-reader fast path is openOverlay().
-    overlay = Overlay::Toolbar;
+    overlay = rootOverlay();
     focusedTool = 0;
+    panelIndex = 0;
     panelHoldJumped = false;
     panelCursorShown = !mappedInput.hasTouch();
     if (!toolbarUi) toolbarUi = std::make_unique<ReaderToolbarUi>(renderer);
@@ -325,7 +327,10 @@ void EpubReaderActivity::openReaderMenu() {
     requestUpdate();
     return;
   }
-  // Child screens (chapter list, text settings) release the section to free its
+  openListMenu();
+}
+
+void EpubReaderActivity::openListMenu() {  // Child screens (chapter list, text settings) release the section to free its
   // pagination buffers; chapterPosition() covers that with the cached position.
   const ChapterPosition position = chapterPosition();
   const int bookProgressPercent = bookPercentFor(position);
@@ -800,7 +805,7 @@ void EpubReaderActivity::loop() {
         return;
       case HomeButtonAction::ReaderMenu:
         if (usesToolbarMenu() && section)
-          openOverlay(Overlay::Toolbar);
+          openOverlay(rootOverlay());
         else
           openReaderMenu();
         return;
@@ -831,7 +836,7 @@ void EpubReaderActivity::loop() {
     // toolbar over it (one refresh) instead of pushing a full-screen menu.
     if (usesToolbarMenu() && section) {
       pendingManualTurn = 0;
-      openOverlay(Overlay::Toolbar);
+      openOverlay(rootOverlay());
     } else {
       openReaderMenu();
     }
@@ -1888,6 +1893,7 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   const auto t0 = millis();
   const int fontId = SETTINGS.getReaderFontId();
   ImageBlock::clearRenderFailures();
+  readerexcerpt::capture(*page);
 
   struct PxcSlotGuard {
     ~PxcSlotGuard() { ImageBlock::releaseRenderCache(); }
@@ -2295,6 +2301,8 @@ constexpr StrId kSpacingIds[] = {StrId::STR_TIGHT, StrId::STR_NORMAL, StrId::STR
 constexpr StrId kAlignIds[] = {StrId::STR_JUSTIFY, StrId::STR_ALIGN_LEFT, StrId::STR_CENTER, StrId::STR_ALIGN_RIGHT,
                                StrId::STR_BOOK_S_STYLE};
 constexpr int kTextRowCount = static_cast<int>(std::size(kTextRowNames));
+// Menu sheet: the shared sheet items plus a closing More row.
+constexpr int kMenuSheetRowCount = static_cast<int>(std::size(EpubReaderMenuActivity::kSheetItems)) + 1;
 static_assert(std::size(kSpacingIds) == CrossPointSettings::LINE_COMPRESSION_COUNT, "line spacing labels");
 static_assert(std::size(kAlignIds) == CrossPointSettings::PARAGRAPH_ALIGNMENT_COUNT, "alignment labels");
 }  // namespace
@@ -2302,8 +2310,10 @@ static_assert(std::size(kAlignIds) == CrossPointSettings::PARAGRAPH_ALIGNMENT_CO
 bool EpubReaderActivity::usesToolbarMenu() const {
   // Both board classes drive the same chrome: touch through the FreeInkUI tap
   // targets, buttons through the focused-tool pill and the panel cursor.
-  return SETTINGS.readerMenuStyle == CrossPointSettings::READER_MENU_TOOLBAR;
+  return usesMenuSheet() || SETTINGS.readerMenuStyle == CrossPointSettings::READER_MENU_TOOLBAR;
 }
+
+bool EpubReaderActivity::usesMenuSheet() { return UITheme::getInstance().getMetrics().readerMenuSheet; }
 
 std::string EpubReaderActivity::currentChapterTitle() const {
   if (!epub) return "";
@@ -2443,6 +2453,10 @@ void EpubReaderActivity::openOverlay(Overlay target) {
       buildMoreActions();
       toolbarUi->nav().reset();
       break;
+    case Overlay::Menu:
+      panelIndex = 0;
+      toolbarUi->nav().reset();
+      break;
     default:
       break;
   }
@@ -2541,7 +2555,23 @@ void EpubReaderActivity::renderOverlay() {
   // Tap-first: the cursor is only drawn once a button has moved it, so a
   // tapped row does not stay inverted after its action.
   model.selectedIndex = panelCursorShown ? panelIndex : -1;
-  if (overlay == Overlay::Contents) {
+  if (overlay == Overlay::Menu) {
+    chapterTitle = currentChapterTitle();
+    const int pageCount = section->estimatedTotalPages();
+    const float chapterProgress =
+        pageCount > 0 ? static_cast<float>(section->currentPage + 1) / static_cast<float>(pageCount) : 0.0f;
+    const float bookProgress = epub->calculateProgress(currentSpineIndex, chapterProgress);
+    pageInfo = std::to_string(section->currentPage + 1) + " / " + std::to_string(pageCount) + " \u00b7 " +
+               std::to_string(clampPercent(static_cast<int>(bookProgress * 100.0f + 0.5f))) + "%";
+    model.menuSheet = true;
+    model.panelTitle = chapterTitle.c_str();
+    model.panelSubtitle = pageInfo.c_str();
+    model.itemCount = kMenuSheetRowCount;
+    model.rowText = [](int i) {
+      return std::string(i < kMenuSheetRowCount - 1 ? I18N.get(EpubReaderMenuActivity::kSheetItems[i].labelId)
+                                                    : tr(STR_TOOL_MORE));
+    };
+  } else if (overlay == Overlay::Contents) {
     model.panelTitle = tr(STR_TOOL_CONTENTS);
     model.itemCount = epub->getTocItemsCount();
     model.rowText = [this](int i) {
@@ -2686,6 +2716,7 @@ void EpubReaderActivity::handleOverlayInput() {
   // --- Panels (Contents / Text / More) ---
   const int count = overlay == Overlay::Contents ? epub->getTocItemsCount()
                     : overlay == Overlay::Text   ? kTextRowCount
+                    : overlay == Overlay::Menu   ? kMenuSheetRowCount
                                                  : static_cast<int>(moreItems.size());
   const int pageRows = std::max(1, toolbarUi->visibleRows());
 
@@ -2736,12 +2767,18 @@ void EpubReaderActivity::handleOverlayInput() {
       requestUpdate();
     } else if (overlay == Overlay::More) {
       activateMoreRow(panelIndex);
+    } else if (overlay == Overlay::Menu) {
+      activateMenuSheetRow(panelIndex);
     }
   };
 
   // Steps up to the toolbar -- the Back button and a tap on the page above
   // the sheet.
   const auto dismissPanel = [this, &fastRedraw] {
+    if (overlay == Overlay::Menu) {  // the menu sheet is the root: back to the page
+      closeOverlayToPage();
+      return;
+    }
     overlay = Overlay::Toolbar;
     // Restore the snapshotted page under the toolbar instead of re-rendering
     // it (2+ refreshes -> one FAST). Re-store right away so another panel
@@ -2978,6 +3015,28 @@ void EpubReaderActivity::activateMoreRow(int row) {
     default:
       break;
   }
+  runLeafMenuAction(action);
+}
+
+void EpubReaderActivity::activateMenuSheetRow(const int row) {
+  if (row < 0 || row >= kMenuSheetRowCount) return;
+  {
+    RenderLock lock;  // the actions launch screens that paint the framebuffer
+    settleOverlayRefresh();
+  }
+  if (row < kMenuSheetRowCount - 1) {
+    runLeafMenuAction(EpubReaderMenuActivity::kSheetItems[row].action);
+    return;
+  }
+  // More: the full-screen menu, holding the items the sheet leaves out.
+  overlay = Overlay::None;
+  discardOverlayPage();
+  toolbarUi.reset();
+  openListMenu();
+}
+
+void EpubReaderActivity::runLeafMenuAction(const EpubReaderMenuActivity::MenuAction action) {
+  using MA = EpubReaderMenuActivity::MenuAction;
   // Leaf actions open their own screen / perform the action; close the overlay first.
   overlay = Overlay::None;
   if (action == MA::GO_TO_PERCENT && overlayPageStored) {

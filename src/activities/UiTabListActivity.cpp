@@ -2,6 +2,7 @@
 
 #include <GfxRenderer.h>
 
+#include <algorithm>
 #include <cassert>
 
 #include "MappedInputManager.h"
@@ -57,6 +58,50 @@ void UiTabListActivity::onRowAction(const fui::ActionEvent& event) {
 void UiTabListActivity::moveRingTo(const int ringIndex) {
   activeNav().requestSelection(ringIndex);
   requestUpdate();
+}
+
+void UiTabListActivity::stepRowsWithSectionJumps(const int direction, const int count) {
+  if (count <= 0) return;
+  const int row = std::clamp(ringPos(), 1, count) - 1;
+  const unsigned long now = millis();
+  const bool rapid = burstPresses > 0 && direction == burstDirection && now - lastStepMs <= kRapidPressMs;
+  lastStepMs = now;
+  burstDirection = direction;
+  if (!rapid) {
+    burstPresses = 1;
+    burstOriginRow = row;
+    moveRingTo(1 + (direction > 0 ? ButtonNavigator::nextIndex(row, count) : ButtonNavigator::previousIndex(row, count)));
+    return;
+  }
+  // The second press measures from where the burst began, undoing the first
+  // single-row step (which may have wrapped).
+  const int from = burstPresses == 1 ? burstOriginRow : row;
+  ++burstPresses;
+  int target = from;
+  if (direction < 0) {
+    target = 0;
+    for (int r = from - 1; r > 0; --r) {
+      if (rowStartsSection(r)) {
+        target = r;
+        break;
+      }
+    }
+  } else {
+    target = count - 1;
+    for (int r = from + 1; r < count; ++r) {
+      if (rowStartsSection(r)) {
+        target = r;
+        break;
+      }
+    }
+  }
+  moveRingTo(1 + target);
+}
+
+void UiTabListActivity::holdStepRows(const int direction, const int count) {
+  if (count <= 0) return;
+  const int row = std::clamp(ringPos(), 1, count) - 1;
+  moveRingTo(1 + std::clamp(row + direction, 0, count - 1));
 }
 
 void UiTabListActivity::navigateButtons() {

@@ -53,16 +53,36 @@ struct ThemeMetrics {
   int listScrollWidth;     // scroll indicator thickness
   int listScrollSide;      // 0 = right edge, 1 = left edge
   bool listTitleBold;      // bold row titles (RoundedRaff)
+  // Outline drawn around the selected row instead of the selection style's
+  // fill (Pulp); 0 = none.
+  int listSelectionBorder = 0;
+  // Lists set like a book (Pulp): centered italic section headings with no
+  // rule, and the book's own title over its table of contents.
+  bool bookStyleLists = false;
+  // Lists show "N more" / "N above" in a row slot instead of a scrollbar (Pulp).
+  bool listOverflowCounts = false;
+  // UI text uses the current reader font instead of the built-in UI font (Pulp).
+  bool uiUsesReaderFont = false;
+  // Settings is one list with a heading per category instead of tabs (Pulp).
+  bool settingsSingleList = false;
+  // Settings with several values step to the next one in place instead of opening a picker (Pulp).
+  bool settingsCycleValues = false;
+  // Select in a book opens a short menu sheet over the page instead of the
+  // reader menu style's toolbar or full-screen list (Pulp).
+  bool readerMenuSheet = false;
   // FreeInkUI header shape, same contract as the list fields above.
   int headerSidePadding;    // title text inset
   int headerUnderlineSize;  // bottom rule thickness (Lyra), 0 = none
   int headerTitleAlign;     // 0 = left, 1 = center, 2 = right (fui::TextAlign order)
   int headerBatterySide;    // 0 = right edge, 1 = left edge
+  bool headerTitleBold = false;
   // Header clock opt-out for themes whose title layout can't spare the left
   // reserve (RoundedRaff); the user setting still governs the themes that can.
   bool headerShowsClock = true;
   // Clock slot: centered on the band, or on the left after the back arrow.
   bool headerClockCentered = true;
+  // Battery indicator in the header's status strip (off for Pulp).
+  bool headerShowsBattery = true;
   int menuRowHeight;
   int menuSpacing;
 
@@ -81,6 +101,11 @@ struct ThemeMetrics {
   int homeCoverTileHeight;
   int homeRecentBooksCount;
   bool homeContinueReadingInMenu;
+  // Home menu is only Books (the Library) and Settings (Pulp).
+  bool homeMinimalMenu = false;
+  // Library is one Books list: File Transfer, then Recent and On This Device
+  // sections, with no sort tabs or search (Pulp).
+  bool libraryBookShelf = false;
   int homeMenuTopOffset;
 
   int buttonHintsHeight;
@@ -293,6 +318,8 @@ class BaseTheme {
   // Thumb generation height for home covers; 0 means use metrics.homeCoverHeight.
   // Themes with slots wider than 0.6 aspect override this so covers still fill.
   virtual int homeCoverThumbHeight(const GfxRenderer&) const { return 0; }
+  // Home cover tile height; 0 means use metrics.homeCoverTileHeight.
+  virtual int homeCoverTileHeight(const GfxRenderer&) const { return 0; }
 
   // Shared constants and helpers for battery drawing (used by all themes)
   static constexpr int batteryPercentSpacing = 4;

@@ -75,4 +75,7 @@ class UiAppHost {
   // Opened by the render task after publication and closed on lifecycle/state
   // resets; read by the loop task (route*).
   std::atomic<bool> uiReady{false};
+  // Body font the target was last bound to. Themes that set the UI in the
+  // reader font change it whenever the reader font or size changes.
+  int boundBodyFontId = 0;
 };

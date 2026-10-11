@@ -90,7 +90,9 @@ void ReaderToolbarUi::onAction(const fui::ActionEvent& event, void* user) {
 
 void ReaderToolbarUi::screenFn(UiScreen& screen, void* user) {
   auto* self = static_cast<ReaderToolbarUi*>(user);
-  if (self->model_.panel) {
+  if (self->model_.menuSheet) {
+    self->buildMenuSheet(screen);
+  } else if (self->model_.panel) {
     self->buildPanel(screen);
   } else {
     self->buildToolbar(screen);
@@ -325,4 +327,58 @@ void ReaderToolbarUi::buildPanel(UiScreen& screen) {
     pageStyle.align = fui::TextAlign::Right;
     screen.target().text(pageIndicatorRect_, buf, pageStyle);
   }
+}
+
+void ReaderToolbarUi::buildMenuSheet(UiScreen& screen) {
+  const auto& tokens = screen.theme();
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const int count = std::clamp(model_.itemCount, 0, kMaxWindow);
+
+  fui::SheetProps sheetProps;
+  sheetProps.anchor = fui::SheetEdge::Bottom;
+  sheetProps.dismissAction = ACTION_DISMISS;
+  sheetProps.grabberHeight = 0;
+  sheetProps.grabberMargin = 0;
+  sheetProps.grabberInset = static_cast<int16_t>(metrics.verticalSpacing);
+
+  // Heading rows match the full-screen lists' row height; the sheet fits them
+  // and every menu row exactly.
+  const int16_t rowH = static_cast<int16_t>(metrics.listRowHeight);
+  const int headingRows = model_.panelSubtitle ? 2 : 1;
+  screen.sheet(sheetProps, static_cast<int16_t>(sheetProps.grabberInset + (headingRows + count) * rowH +
+                                                metrics.verticalSpacing));
+
+  fui::TextStyle headingStyle = tokens.bodyText;
+  headingStyle.bold = false;
+  headingStyle.italic = true;
+  headingStyle.align = fui::TextAlign::Center;
+  headingStyle.maxLines = 1;
+  const fui::Insets headingInset{0, static_cast<int16_t>(metrics.contentSidePadding), 0,
+                                 static_cast<int16_t>(metrics.contentSidePadding)};
+  if (model_.panelTitle) screen.target().text(screen.takeTop(rowH).inset(headingInset), model_.panelTitle, headingStyle);
+  if (model_.panelSubtitle) {
+    fui::TextStyle subtitleStyle = headingStyle;
+    subtitleStyle.italic = false;
+    screen.target().text(screen.takeTop(rowH).inset(headingInset), model_.panelSubtitle, subtitleStyle);
+  }
+
+  for (int i = 0; i < count; ++i) {
+    windowLabels_[i] = model_.rowText ? model_.rowText(i) : std::string();
+    fui::ListItem item;
+    item.label = windowLabels_[i].c_str();
+    item.actionValue = static_cast<int16_t>(i);
+    windowItems_[i] = item;
+  }
+  listProps_.items = windowItems_;
+  listProps_.count = static_cast<uint16_t>(count);
+  listProps_.itemsWindowFirst = 0;
+  listProps_.itemsWindowCount = static_cast<uint16_t>(count);
+  listProps_.action = ACTION_ROW;
+  listProps_.inputMask = fui::InputTouch;  // physical buttons stay with the reader
+  listProps_.rowHeight = rowH;
+  listProps_.rowGap = 0;
+  listProps_.labelText = tokens.bodyText;
+  listProps_.labelText.maxLines = 1;
+  listProps_.selectedIndex = static_cast<int16_t>(model_.selectedIndex);
+  if (count > 0) screen.list(listProps_);
 }

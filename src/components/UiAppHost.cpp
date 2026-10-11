@@ -5,7 +5,9 @@
 namespace fui = freeink::ui;
 
 UiAppHost::UiAppHost(const GfxRenderer& renderer)
-    : uiTarget(makeUiTarget(renderer)), app(uiTarget, uiTarget.deviceContext()) {}
+    : uiTarget(makeUiTarget(renderer)), app(uiTarget, uiTarget.deviceContext()) {
+  boundBodyFontId = uiScaleSpec().bodyFontId;
+}
 
 void UiAppHost::resetUi() {
   uiReady = false;
@@ -13,6 +15,13 @@ void UiAppHost::resetUi() {
 }
 
 void UiAppHost::renderUi() {
+  // The old font may already be unloaded, so a stale binding would draw no text.
+  const int bodyFontId = uiScaleSpec().bodyFontId;
+  if (bodyFontId != boundBodyFontId) {
+    bindUiFonts(uiTarget);
+    boundBodyFontId = bodyFontId;
+    applySharedUiTheme(app, uiTarget);  // row heights follow the new line height
+  }
   app.setDevice(uiTarget.deviceContext());
   app.render();
   uiReady = true;

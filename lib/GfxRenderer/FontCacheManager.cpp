@@ -189,6 +189,7 @@ void FontCacheManager::recordText(const char* text, int fontId, EpdFontFamily::S
 
 FontCacheManager::PrewarmScope::PrewarmScope(FontCacheManager& manager) : manager_(&manager) {
   manager_->scanMode_ = ScanMode::Scanning;
+  manager_->prewarmScopeActive_ = true;
   manager_->clearCache();
   manager_->resetStats();
   manager_->scanCodepointCount_ = 0;
@@ -239,6 +240,7 @@ FontCacheManager::PrewarmScope::~PrewarmScope() {
   if (active_) {
     endScanAndPrewarm();  // no-op if already called
     manager_->clearCache();
+    manager_->prewarmScopeActive_ = false;
   }
 }
 

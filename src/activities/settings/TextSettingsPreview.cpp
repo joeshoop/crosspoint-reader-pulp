@@ -10,10 +10,12 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <utility>
 
 #include "CrossPointSettings.h"
+#include "ReaderExcerpt.h"
 #include "fontIds.h"
 
 namespace textsettings {
@@ -29,27 +31,30 @@ CssTextAlign toCssAlign(uint8_t align) {
   return static_cast<CssTextAlign>(align);
 }
 
-// Lay the sample text out through the reader engine into layout.lines
-void relayout(PreviewLayout& layout, const GfxRenderer& renderer, int fontId, int textWidth) {
-  layout.lines.clear();
+// The current book's page when the reader has drawn one, else the stock sample.
+const char* previewText() {
+  const auto& excerpt = readerexcerpt::current();
+  return excerpt.text.empty() ? I18N.get(StrId::STR_FONT_PREVIEW_TEXT) : excerpt.text.c_str();
+}
 
+// Lay one paragraph out through the reader engine, appending to layout.lines.
+void layoutParagraph(PreviewLayout& layout, const GfxRenderer& renderer, int fontId, int textWidth, const char* text,
+                     const char* end, uint8_t indentSpaces) {
   BlockStyle style;
   style.alignment = toCssAlign(SETTINGS.paragraphAlignment);
   style.textAlignDefined = true;  // honor the user's choice; RTL auto-detected from text
 
-  ParsedText parsed(SETTINGS.hyphenationEnabled != 0, SETTINGS.focusReadingEnabled != 0, style,
-                    SETTINGS.paragraphIndentSpaces);
+  ParsedText parsed(SETTINGS.hyphenationEnabled != 0, SETTINGS.focusReadingEnabled != 0, style, indentSpaces);
 
   // Feed one space-separated word at a time; addWord handles NFC/CJK/RTL/focus splitting
-  const char* text = I18N.get(StrId::STR_FONT_PREVIEW_TEXT);
   std::string word;
   for (const char* p = text;; p++) {
-    if (*p == ' ' || *p == '\0') {
+    if (p == end || *p == ' ') {
       if (!word.empty()) {
         parsed.addWord(word, EpdFontFamily::REGULAR);
         word.clear();
       }
-      if (*p == '\0') break;
+      if (p == end) break;
     } else {
       word.push_back(*p);
     }
@@ -57,8 +62,38 @@ void relayout(PreviewLayout& layout, const GfxRenderer& renderer, int fontId, in
 
   parsed.layoutAndExtractLines(
       renderer, fontId, static_cast<uint16_t>(textWidth),
-      [&layout](std::unique_ptr<TextBlock> line, uint32_t) { layout.lines.push_back(std::move(line)); }, true,
-      SETTINGS.getCharacterSpacing(), SETTINGS.wordSpacing);
+      [&layout](std::unique_ptr<TextBlock> line, uint32_t) {
+        layout.lines.push_back(std::move(line));
+        layout.paragraphEnds.push_back(false);
+      },
+      true, SETTINGS.getCharacterSpacing(), SETTINGS.wordSpacing);
+  if (!layout.paragraphEnds.empty()) layout.paragraphEnds.back() = true;
+}
+
+// Lay the preview text out through the reader engine into layout.lines
+void relayout(PreviewLayout& layout, const GfxRenderer& renderer, int fontId, int textWidth) {
+  layout.lines.clear();
+  layout.paragraphEnds.clear();
+  const auto& excerpt = readerexcerpt::current();
+  layout.fromBook = !excerpt.text.empty();
+  if (!layout.fromBook) {
+    const char* text = I18N.get(StrId::STR_FONT_PREVIEW_TEXT);
+    layoutParagraph(layout, renderer, fontId, textWidth, text, text + strlen(text), SETTINGS.paragraphIndentSpaces);
+    return;
+  }
+
+  // One engine pass per book paragraph; a page that opens mid-paragraph has no indent.
+  const char* text = excerpt.text.c_str();
+  const char* textEnd = text + excerpt.text.size();
+  bool firstParagraph = true;
+  while (text < textEnd) {
+    const char* end = static_cast<const char*>(memchr(text, '\n', textEnd - text));
+    if (!end) end = textEnd;
+    const bool indent = !(firstParagraph && excerpt.startsMidParagraph);
+    layoutParagraph(layout, renderer, fontId, textWidth, text, end, indent ? SETTINGS.paragraphIndentSpaces : 0);
+    firstParagraph = false;
+    text = end + 1;
+  }
 }
 
 }  // namespace
@@ -69,13 +104,17 @@ void renderPreview(const GfxRenderer& renderer, PreviewLayout& layout, int previ
   const int width = renderer.getScreenWidth() - (previewPadding * 2);
   if (width <= 0 || height <= 0) return;
 
+  // No family/size names: no caption, and the sample text keeps the space.
+  const bool showLabel = familyName && sizeName;
   const int labelH = renderer.getTextHeight(UI_10_FONT_ID);
-  const int labelReserved = labelH + labelGap + previewPadding;
+  const int labelReserved = showLabel ? labelH + labelGap + previewPadding : previewPadding;
 
-  char labelBuf[128];
-  snprintf(labelBuf, sizeof(labelBuf), "%s \"%s, %s\"", tr(STR_PREVIEW), familyName, sizeName);
-  const int labelY = top + height - previewPadding - labelH;
-  renderer.drawText(UI_10_FONT_ID, left, labelY, labelBuf);
+  if (showLabel) {
+    char labelBuf[128];
+    snprintf(labelBuf, sizeof(labelBuf), "%s \"%s, %s\"", tr(STR_PREVIEW), familyName, sizeName);
+    const int labelY = top + height - previewPadding - labelH;
+    renderer.drawText(UI_10_FONT_ID, left, labelY, labelBuf);
+  }
 
   const int fontId = SETTINGS.getReaderFontId();
   if (fontId == 0) return;
@@ -108,18 +147,28 @@ void renderPreview(const GfxRenderer& renderer, PreviewLayout& layout, int previ
                        .characterSpacing = SETTINGS.getCharacterSpacing(),
                        .wordSpacingPercent = SETTINGS.wordSpacing,
                        .focusReading = SETTINGS.focusReadingEnabled != 0,
-                       .hyphenation = SETTINGS.hyphenationEnabled != 0};
+                       .hyphenation = SETTINGS.hyphenationEnabled != 0,
+                       .excerptGeneration = readerexcerpt::current().generation};
   if (key != layout.key) {
     if (auto* fcm = renderer.getFontCacheManager()) {
-      fcm->prewarmCache(fontId, I18N.get(StrId::STR_FONT_PREVIEW_TEXT), SETTINGS.focusReadingEnabled ? 0x03 : 0x01);
+      fcm->prewarmCache(fontId, previewText(), SETTINGS.focusReadingEnabled ? 0x03 : 0x01);
     }
     relayout(layout, renderer, fontId, textWidth);
     layout.key = key;
   }
 
-  // Draw the sample twice so the paragraph gap is visible
   int y = top + previewPadding;
   const int textBottomLimit = top + height - labelReserved;
+  if (layout.fromBook) {
+    for (size_t i = 0; i < layout.lines.size(); i++) {
+      if (y + lineH > textBottomLimit) return;
+      layout.lines[i]->render(renderer, fontId, textLeft, y);
+      y += lineAdvance + (layout.paragraphEnds[i] ? paragraphGap : 0);
+    }
+    return;
+  }
+
+  // Draw the sample twice so the paragraph gap is visible
   for (int paragraph = 0; paragraph < 2; paragraph++) {
     for (const auto& line : layout.lines) {
       if (y + lineH > textBottomLimit) return;

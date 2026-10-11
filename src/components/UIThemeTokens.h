@@ -1,6 +1,7 @@
 #pragma once
 #include <BoardConfig.h>
 #include <FreeInkUIGfxRenderer.h>
+#include <I18n.h>
 
 #include "UITheme.h"
 
@@ -22,6 +23,11 @@ inline freeink::ui::ThemeTokens uiThemeTokens(const freeink::ui::GfxRendererTarg
   tokens.listInset = static_cast<int16_t>(metrics.listInset);
   tokens.listSidePadding = static_cast<int16_t>(metrics.listSidePadding);
   tokens.listSelectionStyle = static_cast<fui::SelectionStyle>(metrics.listSelectionStyle);
+  if (metrics.listSelectionBorder > 0) {
+    tokens.listRow = fui::selectedOutlineListRowStyles(metrics.listRowRadius);
+    tokens.listRow.selected.borderWidth = static_cast<uint8_t>(metrics.listSelectionBorder);
+    tokens.listRow.active = tokens.listRow.selected;
+  }
   tokens.listScrollWidth = static_cast<int16_t>(metrics.listScrollWidth);
   tokens.listScrollSide = static_cast<uint8_t>(metrics.listScrollSide);
   // No extra scroll-track inset: the bezel is already compensated once at the
@@ -43,5 +49,28 @@ inline freeink::ui::ThemeTokens uiThemeTokens(const freeink::ui::GfxRendererTarg
   tokens.sheetRadius = static_cast<uint8_t>(metrics.sheetRadius);
   tokens.capsuleRadius = static_cast<uint8_t>(metrics.capsuleRadius);
   tokens.bodyText.bold = metrics.listTitleBold;
+  tokens.titleText.bold = metrics.headerTitleBold;
+  if (metrics.listOverflowCounts) {
+    tokens.listMoreAboveFormat = tr(STR_ROWS_ABOVE);
+    tokens.listMoreBelowFormat = tr(STR_ROWS_BELOW);
+    tokens.listMoreText = tokens.bodyText;
+    tokens.listMoreText.italic = true;
+    tokens.listMoreText.align = fui::TextAlign::Center;
+  }
   return tokens;
+}
+
+// Section headings for lists that use ListItem::sectionHeading: themes with
+// bookStyleLists set them like a book's section titles (centered italic body
+// text on a full row); other themes keep the list's default heading.
+inline void applySectionHeadingStyle(const freeink::ui::ThemeTokens& theme, freeink::ui::ListProps& props) {
+  const ThemeMetrics& metrics = UITheme::getInstance().getMetrics();
+  if (!metrics.bookStyleLists) return;
+  props.headerText = theme.bodyText;
+  props.headerText.bold = false;
+  props.headerText.italic = true;
+  props.headerText.align = freeink::ui::TextAlign::Center;
+  props.headerUnderline = false;
+  props.sectionGap = 0;
+  props.headerRowHeight = static_cast<int16_t>(metrics.listRowHeight);
 }

@@ -20,6 +20,7 @@
 #include "activities/util/KeyboardEntryActivity.h"
 #include "components/UIScale.h"
 #include "components/UITheme.h"
+#include "components/UIThemeTokens.h"
 #include "components/icons/headerIcons.h"
 #include "components/icons/listIcons.h"
 #include "components/icons/search32.h"
@@ -108,8 +109,15 @@ void LibraryListActivity::onEnter() {
   // Entered while Confirm was still held (typical when launched from the home
   // menu): ignore its release, or we would open whatever sits at row 0.
   lockNextConfirmRelease = mappedInput.isPressed(MappedInputManager::Button::Confirm);
+  if (bookShelf()) {
+    // No strip to rest on: start on the first book, or File Transfer when the
+    // card has none.
+    activeNav().selected = listCount() > 1 ? 2 : 1;
+  }
   requestUpdate(true);
 }
+
+bool LibraryListActivity::bookShelf() { return UITheme::getInstance().getMetrics().libraryBookShelf; }
 
 void LibraryListActivity::onExit() {
   index.close();
@@ -138,7 +146,7 @@ void LibraryListActivity::swallowHeldReleases() {
 }
 
 int LibraryListActivity::selectedEntry() const {
-  const int entry = ringPos() - 1;
+  const int entry = ringPos() - 1 - shelfRows();
   return entry < 0 ? 0 : entry;
 }
 
@@ -221,6 +229,13 @@ void LibraryListActivity::openBookByPath(const std::string& path) {
 }
 
 void LibraryListActivity::activateIndex(const int index) {
+  if (onFileTransferRow()) {
+    // The parameter shadows the index member; release the card before leaving.
+    app.clearTapFlash();
+    this->index.close();
+    activityManager.goToFileTransfer();
+    return;
+  }
   if (groupsCollapsed) {
     expandGroup(index);
   } else {
@@ -235,8 +250,9 @@ void LibraryListActivity::activateIndex(const int index) {
 bool LibraryListActivity::deleteEligible() const { return !groupsCollapsed && (!query.empty() || !groupable()); }
 
 void LibraryListActivity::onRowLongPress(const int index) {
+  if (onFileTransferRow()) return;
   if (isRecentSort(sortOrder)) {
-    showRecentBookOptions(index);
+    showRecentBookOptions(selectedEntry());
   } else if (deleteEligible()) {
     promptDeleteBook(index);
   } else if (!groupsCollapsed && groupable()) {
@@ -493,7 +509,9 @@ int LibraryListActivity::bookRowCount() const {
   return static_cast<int>(index.bookCount()) + (pinned > 0 ? pinned - overlapCount : 0);
 }
 
-int LibraryListActivity::listCount() const { return groupsCollapsed ? static_cast<int>(groupCount) : bookRowCount(); }
+int LibraryListActivity::listCount() const {
+  return groupsCollapsed ? static_cast<int>(groupCount) : bookRowCount() + shelfRows();
+}
 
 // Entry position on screen to row position in the sort order. Identity while
 // unfiltered and unpinned, so the shelf costs nothing when nothing is typed.
@@ -650,7 +668,9 @@ void LibraryListActivity::applyFilter() {
 // leave for home.
 void LibraryListActivity::handleBackAction() {
   auto& nav = activeNav();
-  if (!query.empty()) {
+  if (bookShelf()) {
+    onGoHome();
+  } else if (!query.empty()) {
     query.clear();
     applyFilter();
     nav.selected = 0;
@@ -735,7 +755,9 @@ bool LibraryListActivity::handleButtons() {
   // ActivityManager::loop() before any activity runs, so it cannot land in
   // the freshly opened confirmation and select its default.
   if (mappedInput.wasLongPressed(MappedInputManager::Button::Confirm, LONG_PRESS_MS)) {
-    if (tabsFocused()) {
+    if (onFileTransferRow()) {
+      activateIndex(0);
+    } else if (tabsFocused()) {
       if (!degraded) toggleSortDirection();
     } else if (isRecentSort(sortOrder)) {
       showRecentBookOptions(selectedEntry());
@@ -759,7 +781,7 @@ bool LibraryListActivity::handleButtons() {
       stepTab(1);
       return true;
     }
-    if (count > 0) activateIndex(selectedEntry());
+    if (count > 0) activateIndex(ringPos() - 1);
     return true;
   }
 
@@ -768,6 +790,14 @@ bool LibraryListActivity::handleButtons() {
 
 void LibraryListActivity::navigateButtons() {
   const int count = listCount();
+  if (bookShelf()) {
+    // Rows only: the ring never visits the absent strip.
+    buttonNavigator.onNextPress([this, count] { stepRowsWithSectionJumps(1, count); });
+    buttonNavigator.onPreviousPress([this, count] { stepRowsWithSectionJumps(-1, count); });
+    buttonNavigator.onNextContinuous([this, count] { holdStepRows(1, count); });
+    buttonNavigator.onPreviousContinuous([this, count] { holdStepRows(-1, count); });
+    return;
+  }
   if (mappedInput.wasPressed(MappedInputManager::Button::NavNext) ||
       mappedInput.wasPressed(MappedInputManager::Button::NavPrevious)) {
     navigationStartedOnTabs = tabsFocused();
@@ -894,6 +924,61 @@ void LibraryListActivity::buildRows(UiScreen& screen) {
           rows > 0 ? winItems[0].label : "<none>");
 }
 
+// Books shelf: File Transfer, then "Recent" over the pinned reads and "On This
+// Device" over the rest, each book on one "Title - Author" line. Windowed like
+// buildRows(); list positions are shifted by the File Transfer row.
+void LibraryListActivity::buildShelfRows(UiScreen& screen) {
+  auto& nav = activeNav();
+  const int count = listCount();
+  const int pinned = pinnedCount();
+
+  fui::ListProps props;
+  props.count = static_cast<uint16_t>(count);
+  props.action = ACTION_ROW;
+  props.inputMask = fui::InputTouch | fui::InputLongPress;
+  props.labelText = screen.theme().bodyText;
+  props.labelText.maxLines = 1;
+  applySectionHeadingStyle(screen.theme(), props);
+  syncTabListViewport(screen, props);
+
+  const size_t cap = static_cast<size_t>(nav.visibleRows > 0 ? nav.visibleRows : 1) + 1;
+  if (winTitles.size() < cap) winTitles.resize(cap);
+  if (winAuthors.size() < cap) winAuthors.resize(cap);
+  winItems.clear();
+  if (winItems.capacity() < cap) winItems.reserve(cap);
+
+  const int windowStart = static_cast<int>(props.topIndex);
+  int rows = 0;
+  for (int position = windowStart; position < count && rows < static_cast<int>(cap); position++) {
+    fui::ListItem item;
+    item.actionValue = static_cast<int16_t>(position);
+    if (position == 0) {
+      item.label = tr(STR_FILE_TRANSFER);
+      winItems.push_back(item);
+      rows++;
+      continue;
+    }
+    const int entry = position - 1;
+    std::string& line = winTitles[static_cast<size_t>(rows)];
+    std::string& author = winAuthors[static_cast<size_t>(rows)];
+    if (!rowTextFor(entry, line, author)) continue;
+    if (!author.empty()) line.append(" - ").append(author);
+    if (entry == 0 && pinned > 0) {
+      item.sectionHeading = tr(STR_LIBRARY_TAB_RECENT);
+    } else if (entry == pinned) {
+      item.sectionHeading = tr(STR_ON_THIS_DEVICE);
+    }
+    item.label = line.c_str();
+    winItems.push_back(item);
+    rows++;
+  }
+
+  props.items = winItems.data();
+  props.itemsWindowFirst = static_cast<uint16_t>(windowStart);
+  props.itemsWindowCount = static_cast<uint16_t>(winItems.size());
+  screen.list(props);
+}
+
 void LibraryListActivity::formatInitialHeading(uint32_t initial, std::string& out) {
   out.clear();
   if (initial == 0) {
@@ -936,7 +1021,7 @@ void LibraryListActivity::buildHeader(UiScreen& screen) {
     header.leadingIcon = fui::bitmapFromIcon(icon_header_back_32);
     header.leadingAction = ACTION_BACK;
   }
-  if (!degraded) {
+  if (!degraded && !bookShelf()) {
     // Keep both touch actions together on the right; button boards reach
     // rebuild through the row options menu.
     header.trailingIcon = fui::bitmapFromIcon(icon_search_32);
@@ -960,11 +1045,16 @@ void LibraryListActivity::buildScreen(UiScreen& screen) {
   const auto& metrics = UITheme::getInstance().getMetrics();
   // The position readout owns the line above the hints; rows must not overlap
   // it.
-  const int16_t readoutReserved = static_cast<int16_t>(renderer.getLineHeight(SMALL_FONT_ID) + metrics.verticalSpacing);
+  const int16_t readoutReserved =
+      bookShelf() ? 0 : static_cast<int16_t>(renderer.getLineHeight(SMALL_FONT_ID) + metrics.verticalSpacing);
   buildHeader(screen);
   screen.setContentMarginFromScreen(fui::Insets{static_cast<int16_t>(metrics.topPadding + metrics.headerHeight), 0,
                                                 static_cast<int16_t>(metrics.buttonHintsHeight + readoutReserved), 0});
 
+  if (bookShelf()) {
+    buildShelfRows(screen);
+    return;
+  }
   if (!degraded) buildTabBar(screen);
   if (bookRowCount() == 0) {
     const char* message = tr(STR_LIBRARY_NO_RESULTS);
@@ -1000,6 +1090,7 @@ void LibraryListActivity::drawPositionReadout() const {
 }
 
 const char* LibraryListActivity::headerTitle() const {
+  if (bookShelf()) return tr(STR_BOOKS);
   if (!headerSearchTitle.empty()) return headerSearchTitle.c_str();
   return degraded ? tr(STR_LIBRARY_TITLE_UNSORTED) : tr(STR_LIBRARY);
 }
@@ -1031,6 +1122,11 @@ void LibraryListActivity::render(RenderLock&& lock) {
 }
 
 void LibraryListActivity::drawFooter() {
+  if (bookShelf()) {
+    const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    return;
+  }
   drawPositionReadout();
   drawHoldHelp();
 

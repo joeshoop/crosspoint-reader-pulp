@@ -8,6 +8,7 @@
 #include <I18n.h>
 #include <WiFi.h>
 
+#include <algorithm>
 #include <cstddef>
 
 #include "MappedInputManager.h"
@@ -15,6 +16,7 @@
 #include "SilentRestart.h"
 #include "WifiSelectionActivity.h"
 #include "activities/network/CalibreConnectActivity.h"
+#include "components/UIScale.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/PluginEvents.h"
@@ -453,6 +455,11 @@ void CrossPointWebServerActivity::render(RenderLock&&) {
                    isApMode ? tr(STR_HOTSPOT_MODE) : tr(STR_FILE_TRANSFER), nullptr);
 
     if (state == WebServerActivityState::SERVER_RUNNING) {
+      if (metrics.bookStyleLists) {
+        renderServerRunningRows();
+        renderer.displayBuffer();
+        return;
+      }
       GUI.drawSubHeader(renderer, Rect{0, metrics.topPadding + metrics.headerHeight, pageWidth, metrics.tabBarHeight},
                         connectedSSID.c_str());
       renderServerRunning();
@@ -538,6 +545,77 @@ void CrossPointWebServerActivity::renderServerRunning() const {
     // Also show hostname URL
     std::string hostnameUrl = std::string(tr(STR_OR_HTTP_PREFIX)) + AP_HOSTNAME + ".local/";
     renderer.drawCenteredText(SMALL_FONT_ID, startY, hostnameUrl.c_str(), true);
+  }
+
+  const auto labels = mappedInput.mapLabels(tr(STR_EXIT), "", "", "");
+  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+}
+
+void CrossPointWebServerActivity::renderServerRunningRows() const {
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const int pageWidth = renderer.getScreenWidth();
+  const int fontId = uiScaleSpec().bodyFontId;
+  const int lineHeight = renderer.getLineHeight(fontId);
+  const int left = metrics.listInset + metrics.listSidePadding;
+  const int right = pageWidth - left;
+
+  const std::string ipUrl = "http://" + connectedIP + "/";
+  const std::string hostnameUrl = std::string("http://") + AP_HOSTNAME + ".local/";
+
+  // Label left, value right; the URL row holds both addresses, one per line.
+  int rowY = metrics.topPadding + metrics.headerHeight;
+  const auto drawRow = [&](const char* label, const std::string& value, const std::string& secondValue) {
+    const int lines = secondValue.empty() ? 1 : 2;
+    const int rowHeight = std::max(metrics.listRowHeight, lines * lineHeight + metrics.verticalSpacing);
+    // The last line centers on its glyph box, matching single-line list rows.
+    const int blockHeight = (lines - 1) * lineHeight + renderer.getCenteringHeight(fontId);
+    const int textY = rowY + (rowHeight - blockHeight) / 2;
+    renderer.drawText(fontId, left, textY, label);
+    const int labelWidth = renderer.getTextWidth(fontId, label) + metrics.listSidePadding;
+    const int valueMax = right - left - labelWidth;
+    int lineY = textY;
+    for (const std::string* line : {&value, &secondValue}) {
+      if (line->empty()) continue;
+      const std::string text = renderer.truncatedText(fontId, line->c_str(), valueMax);
+      renderer.drawText(fontId, right - renderer.getTextWidth(fontId, text.c_str()), lineY, text.c_str());
+      lineY += lineHeight;
+    }
+    rowY += rowHeight;
+  };
+  drawRow(tr(STR_NETWORK), connectedSSID, "");
+  drawRow(tr(STR_IP_ADDRESS), connectedIP, "");
+  drawRow(tr(STR_URL), ipUrl, hostnameUrl);
+
+  constexpr int kFrameRadius = 8;
+  constexpr int kFramePadding = 10;
+  const int hintsTop = renderer.getScreenHeight() - metrics.buttonHintsHeight;
+  const int qrTop = rowY + metrics.verticalSpacing * 2;
+  if (isApMode) {
+    // A phone must join the hotspot before it can open the page: two codes, side by side.
+    constexpr int kGap = 16;
+    const int frameSize = (right - left - kGap) / 2;
+    const int captionY = qrTop + frameSize + metrics.verticalSpacing;
+    const std::string wifiConfig = std::string("WIFI:T:nopass;S:") + connectedSSID + ";;";
+    const std::string* payloads[] = {&wifiConfig, &hostnameUrl};
+    const char* captions[] = {tr(STR_QR_JOIN_WIFI), tr(STR_QR_OPEN_PAGE)};
+    for (int i = 0; i < 2; i++) {
+      const int x = left + i * (frameSize + kGap);
+      renderer.drawRoundedRect(x, qrTop, frameSize, frameSize, 2, kFrameRadius, true);
+      QrUtils::drawQrCode(
+          renderer,
+          Rect(x + kFramePadding, qrTop + kFramePadding, frameSize - 2 * kFramePadding, frameSize - 2 * kFramePadding),
+          *payloads[i]);
+      const int captionWidth = renderer.getTextWidth(fontId, captions[i], EpdFontFamily::ITALIC);
+      renderer.drawText(fontId, x + (frameSize - captionWidth) / 2, captionY, captions[i], true, EpdFontFamily::ITALIC);
+    }
+  } else {
+    const int frameSize = std::min(right - left, hintsTop - metrics.verticalSpacing * 2 - qrTop);
+    const int x = (pageWidth - frameSize) / 2;
+    renderer.drawRoundedRect(x, qrTop, frameSize, frameSize, 2, kFrameRadius, true);
+    QrUtils::drawQrCode(
+        renderer,
+        Rect(x + kFramePadding, qrTop + kFramePadding, frameSize - 2 * kFramePadding, frameSize - 2 * kFramePadding),
+        ipUrl);
   }
 
   const auto labels = mappedInput.mapLabels(tr(STR_EXIT), "", "", "");

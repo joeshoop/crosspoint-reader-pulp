@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <iterator>
 
 #include "AboutActivity.h"
 #include "ButtonRemapActivity.h"
@@ -41,6 +42,14 @@
 #include "fontIds.h"
 
 namespace fui = freeink::ui;
+
+namespace {
+// Single-list order (Reader first), as indexes into categoryNames.
+constexpr int kListOrder[] = {1, 0, 2, 3};
+// Single-list headings; Controls reads as "Buttons" there.
+constexpr StrId kListHeadings[] = {StrId::STR_CAT_READER, StrId::STR_CAT_DISPLAY, StrId::STR_CAT_BUTTONS,
+                                   StrId::STR_CAT_SYSTEM};
+}  // namespace
 
 SettingsActivity::SettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
     : UiTabListActivity("Settings", renderer, mappedInput) {}
@@ -119,6 +128,25 @@ void SettingsActivity::rebuildSettingsLists() {
                         SettingInfo::Action(StrId::STR_MANAGE_FONTS, SettingAction::DownloadFonts));
   readerSettings.push_back(SettingInfo::Action(StrId::STR_CUSTOMISE_STATUS_BAR, SettingAction::CustomiseStatusBar));
 
+  if (usesSingleList()) {
+    std::vector<SettingInfo>* categories[categoryCount] = {&displaySettings, &readerSettings, &controlsSettings,
+                                                           &systemSettings};
+    allSettings.clear();
+    allSettings.reserve(displaySettings.size() + readerSettings.size() + controlsSettings.size() +
+                        systemSettings.size());
+    for (int i = 0; i < categoryCount; i++) {
+      auto& category = *categories[kListOrder[i]];
+      sectionStarts[i] = static_cast<int>(allSettings.size());
+      std::move(category.begin(), category.end(), std::back_inserter(allSettings));
+      category.clear();
+    }
+    currentSettings = &allSettings;
+    settingsCount = static_cast<int>(allSettings.size());
+    rebuildRowItems();
+    return;
+  }
+
+  allSettings.clear();
   // Update currentSettings pointer and count for the active category
   switch (selectedCategoryIndex) {
     case 0:
@@ -150,9 +178,32 @@ void SettingsActivity::onEnter() {
   syncQuickResumeTimeoutForSleepScreen(/*sleepScreenChanged=*/true, /*quickResumeTimeoutChanged=*/false);
 
   rebuildSettingsLists();
+  // No tab bar to rest on: start on the first row.
+  if (usesSingleList()) activeNav().selected = settingsCount > 0 ? 1 : 0;
+}
+
+bool SettingsActivity::usesSingleList() { return UITheme::getInstance().getMetrics().settingsSingleList; }
+
+bool SettingsActivity::rowStartsSection(const int row) const {
+  return std::find(std::begin(sectionStarts), std::end(sectionStarts), row) != std::end(sectionStarts);
+}
+
+void SettingsActivity::navigateButtons() {
+  if (!usesSingleList()) {
+    UiTabListActivity::navigateButtons();
+    return;
+  }
+  // No tab bar: the ring is just the rows (1..count).
+  const int count = listCount();
+  if (count <= 0) return;
+  buttonNavigator.onNextPress([this, count] { stepRowsWithSectionJumps(1, count); });
+  buttonNavigator.onPreviousPress([this, count] { stepRowsWithSectionJumps(-1, count); });
+  buttonNavigator.onNextContinuous([this, count] { holdStepRows(1, count); });
+  buttonNavigator.onPreviousContinuous([this, count] { holdStepRows(-1, count); });
 }
 
 void SettingsActivity::selectCategory(const int categoryIndex) {
+  if (usesSingleList()) return;  // one list, no categories to switch
   selectedCategoryIndex = categoryIndex;
   switch (selectedCategoryIndex) {
     case 0:
@@ -187,6 +238,13 @@ void SettingsActivity::rebuildRowItems() {
     item.label = I18N.get(settings[i].nameId);
     item.actionValue = static_cast<int16_t>(i);
     rowItems_.push_back(item);
+  }
+  if (usesSingleList()) {
+    for (int i = 0; i < categoryCount; i++) {
+      if (sectionStarts[i] < static_cast<int>(rowItems_.size())) {
+        rowItems_[static_cast<size_t>(sectionStarts[i])].sectionHeading = I18N.get(kListHeadings[i]);
+      }
+    }
   }
 }
 
@@ -240,7 +298,7 @@ bool SettingsActivity::handleCustomInput() {
 void SettingsActivity::stepTab(const int direction) {
   // Ring position 0 stays on the tab bar; a row selection collapses to the
   // new category's first row (per-tab memory is deliberately not kept here).
-  const bool onTabBar = ringPos() == 0;
+  const bool onTabBar = ring() == 0;
   selectedCategoryIndex = direction > 0 ? ButtonNavigator::nextIndex(selectedCategoryIndex, categoryCount)
                                         : ButtonNavigator::previousIndex(selectedCategoryIndex, categoryCount);
   selectCategory(selectedCategoryIndex);
@@ -250,7 +308,8 @@ void SettingsActivity::stepTab(const int direction) {
 
 bool SettingsActivity::handleButtons() {
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-    if (ringPos() == 0) {
+    if (ring() == 0 && usesSingleList()) return true;  // nothing selected (after a touch tap)
+    if (ring() == 0) {
       stepTab(1);
     } else {
       toggleCurrentSetting();
@@ -260,7 +319,10 @@ bool SettingsActivity::handleButtons() {
   }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-    if (ringPos() > 0) {
+    if (usesSingleList()) {
+      SETTINGS.saveToFile();
+      onGoHome();
+    } else if (ring() > 0) {
       activeNav().selected = 0;
       requestUpdate();
     } else {
@@ -275,7 +337,7 @@ bool SettingsActivity::handleButtons() {
 
 void SettingsActivity::toggleCurrentSetting() {
   mappedInput.resetHomeButtonInput();
-  int selectedSetting = ringPos() - 1;
+  int selectedSetting = ring() - 1;
   if (selectedSetting < 0 || selectedSetting >= settingsCount) {
     return;
   }
@@ -289,6 +351,11 @@ void SettingsActivity::toggleCurrentSetting() {
     return;
   }
 
+  // Read before rebuildSettingsLists(), which can move the row `setting` refers to.
+  const auto changedValuePtr = setting.valuePtr;
+  const uint8_t themeAtStart = SETTINGS.uiTheme;
+  const bool usePicker = !UITheme::getInstance().getMetrics().settingsCycleValues;
+
   if (setting.type == SettingType::TOGGLE && setting.valuePtr != nullptr) {
     // Toggle the boolean value using the member pointer
     const bool currentValue = SETTINGS.*(setting.valuePtr);
@@ -296,7 +363,7 @@ void SettingsActivity::toggleCurrentSetting() {
   } else if (setting.type == SettingType::ENUM && setting.valuePtr != nullptr) {
     const uint8_t currentValue = SETTINGS.*(setting.valuePtr);
     const auto enumLabels = setting.enumLabels();
-    if (enumLabels.size() > 2) {
+    if (enumLabels.size() > 2 && usePicker) {
       const auto valuePtr = setting.valuePtr;
       optionPopup.show(setting.nameId, enumLabels.data(), static_cast<int>(enumLabels.size()), currentValue,
                        [this, valuePtr, sleepScreenChanged, quickResumeTimeoutChanged](int idx) {
@@ -315,13 +382,19 @@ void SettingsActivity::toggleCurrentSetting() {
                                     ? static_cast<uint8_t>(setting.enumLabels().size())
                                     : static_cast<uint8_t>(setting.enumStringValues.size());
     const uint8_t cur = setting.valueGetter();
-    if (totalValues > 2) {
+    if (totalValues > 2 && usePicker) {
       const auto valueSetter = setting.valueSetter;
       auto onSelect = [this, valueSetter, sleepScreenChanged, quickResumeTimeoutChanged](int idx) {
+        const uint8_t themeBefore = SETTINGS.uiTheme;
         valueSetter(idx);
         syncQuickResumeTimeoutForSleepScreen(sleepScreenChanged, quickResumeTimeoutChanged);
         SETTINGS.saveToFile();
         rebuildSettingsLists();
+        // The theme picker is a dynamic enum, so it has no valuePtr to key on.
+        if (SETTINGS.uiTheme != themeBefore) {
+          applyUiSettingChange(&CrossPointSettings::uiTheme);
+          rebuildSettingsLists();  // single list or tabs, per the new theme
+        }
       };
       if (!setting.enumStringValues.empty()) {
         optionPopup.show(setting.nameId, setting.enumStringValues, cur, std::move(onSelect));
@@ -459,8 +532,13 @@ void SettingsActivity::toggleCurrentSetting() {
   syncQuickResumeTimeoutForSleepScreen(sleepScreenChanged, quickResumeTimeoutChanged);
   SETTINGS.saveToFile();
   rebuildSettingsLists();
-  applyUiSettingChange(setting.valuePtr);
-  activeNav().selected = std::min(ringPos(), settingsCount);
+  applyUiSettingChange(changedValuePtr);
+  // The theme picker is a dynamic enum, so it has no valuePtr to key on.
+  if (SETTINGS.uiTheme != themeAtStart) {
+    applyUiSettingChange(&CrossPointSettings::uiTheme);
+    rebuildSettingsLists();  // single list or tabs, per the new theme
+  }
+  activeNav().selected = std::min(ring(), settingsCount);
 }
 
 void SettingsActivity::syncQuickResumeTimeoutForSleepScreen(bool sleepScreenChanged, bool quickResumeTimeoutChanged) {
@@ -503,6 +581,11 @@ void SettingsActivity::openSleepTimeoutPicker() {
 
 std::string SettingsActivity::settingValueText(const SettingInfo& setting) {
   if (setting.action == SettingAction::HomeButton) return tr(STR_CONFIGURE);
+  // Single-list themes show the version beside the update check, not in the header.
+  if (setting.action == SettingAction::CheckForUpdates && usesSingleList()) return CROSSPOINT_VERSION;
+  if (setting.type == SettingType::TOGGLE && setting.valuePtr != nullptr) {
+    return SETTINGS.*(setting.valuePtr) != 0 ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
+  }
   if (setting.type == SettingType::ENUM && setting.valuePtr != nullptr) {
     // Guard like the valueGetter branch below: a corrupt/migrated settings
     // byte must not index past the enum table.
@@ -543,7 +626,8 @@ void SettingsActivity::buildScreen(UiScreen& screen) {
   screen.setContentMarginFromScreen(fui::Insets{static_cast<int16_t>(metrics.topPadding + metrics.headerHeight), 0,
                                                 static_cast<int16_t>(metrics.buttonHintsHeight), 0});
 
-  buildTabBar(screen);
+  const bool singleList = usesSingleList();
+  if (!singleList) buildTabBar(screen);
 
   // rowItems_ (label/actionValue) was built by rebuildRowItems() when the
   // category was last selected/rebuilt; only the live value text needs
@@ -557,7 +641,8 @@ void SettingsActivity::buildScreen(UiScreen& screen) {
     const bool checkbox = setting.type == SettingType::TOGGLE ||
                           (setting.type == SettingType::ENUM && setting.enumStringValues.empty() &&
                            labels.size() == 2 && labels[0] == StrId::STR_STATE_OFF && labels[1] == StrId::STR_STATE_ON);
-    if (checkbox && (setting.valuePtr || setting.valueGetter)) {
+    // Single-list rows read On/Off as text, like every other value.
+    if (checkbox && !singleList && (setting.valuePtr || setting.valueGetter)) {
       const bool checked = setting.valuePtr ? SETTINGS.*(setting.valuePtr) != 0 : setting.valueGetter() != 0;
       rowValues_[i].clear();
       GUI.setCheckboxRow(rowItems_[i], checked);
@@ -580,6 +665,14 @@ void SettingsActivity::buildScreen(UiScreen& screen) {
   // common fits-on-one-line case takes the renderer's fast path anyway.
   props.labelText = screen.theme().smallText;
   props.labelText.maxLines = 2;
+  if (singleList) {
+    // Label and value set in the same body type, one line each.
+    props.labelText = screen.theme().bodyText;
+    props.labelText.maxLines = 1;
+    props.valueText = screen.theme().bodyText;
+    props.valueInset = 0;
+    applySectionHeadingStyle(screen.theme(), props);
+  }
   syncTabListViewport(screen, props);
   screen.list(props);
 }
@@ -593,15 +686,17 @@ void SettingsActivity::drawChrome() {
   // Version rides in the header's trailing label slot: the footer position
   // conflicts with button hints on non-touch devices.
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_SETTINGS_TITLE),
-                 CROSSPOINT_VERSION);
+                 usesSingleList() ? nullptr : CROSSPOINT_VERSION);
 }
 
 void SettingsActivity::drawFooter() {
-  const int ring = ringPos();
-  const auto confirmLabel =
-      (ring == 0) ? I18N.get(categoryNames[(selectedCategoryIndex + 1) % categoryCount])
-                  : (ring > 0 && (*currentSettings)[ring - 1].nameId == StrId::STR_TIME_TO_SLEEP ? tr(STR_SELECT)
-                                                                                                 : tr(STR_TOGGLE));
+  const int ringIndex = ring();
+  const char* confirmLabel = tr(STR_TOGGLE);
+  if (ringIndex == 0 && !usesSingleList()) {
+    confirmLabel = I18N.get(categoryNames[(selectedCategoryIndex + 1) % categoryCount]);
+  } else if (ringIndex > 0 && (*currentSettings)[ringIndex - 1].nameId == StrId::STR_TIME_TO_SLEEP) {
+    confirmLabel = tr(STR_SELECT);
+  }
 
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);

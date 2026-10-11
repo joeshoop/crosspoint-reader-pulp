@@ -16,6 +16,7 @@
 #include "SdCardFontSystem.h"
 #include "TextSettingsPreview.h"
 #include "components/UITheme.h"
+#include "components/UIThemeTokens.h"
 #include "fontIds.h"
 
 namespace fui = freeink::ui;
@@ -99,8 +100,27 @@ void TextSettingsActivity::onEnter() {
   tabNavs[static_cast<int>(Tab::Family)].selected = currentFamilyIndex_ + 1;
   tabNavs[static_cast<int>(Tab::Size)].selected = currentSizeIndex_ + 1;
   tabNavs[static_cast<int>(tab_)].selected = 0;  // screen opens with the tab bar focused, not a list row
+  if (usesSingleList()) {
+    tab_ = Tab::Family;  // the one list lives in the first tab's nav
+    tabNavs[static_cast<int>(Tab::Family)].selected = 1;
+  }
 
   rebuildRowItems();
+}
+
+bool TextSettingsActivity::usesSingleList() { return UITheme::getInstance().getMetrics().settingsSingleList; }
+
+void TextSettingsActivity::navigateButtons() {
+  if (!usesSingleList()) {
+    UiTabListActivity::navigateButtons();
+    return;
+  }
+  // No tab bar: the ring is just the rows (1..count).
+  constexpr int count = kSingleListCount;
+  buttonNavigator.onNextPress([this] { stepRowsWithSectionJumps(1, count); });
+  buttonNavigator.onPreviousPress([this] { stepRowsWithSectionJumps(-1, count); });
+  buttonNavigator.onNextContinuous([this] { holdStepRows(1, count); });
+  buttonNavigator.onPreviousContinuous([this] { holdStepRows(-1, count); });
 }
 
 // Rebuilds rowItems_ (label + actionValue) for the active tab. Structural —
@@ -111,6 +131,25 @@ void TextSettingsActivity::rebuildRowItems() {
   rowValues_.assign(count, std::string());
   rowItems_.clear();
   rowItems_.reserve(count);
+  if (usesSingleList()) {
+    for (int i = 0; i < count; i++) {
+      fui::ListItem item;
+      if (i == kFontRow) {
+        item.label = tr(STR_FONT);
+      } else if (i == kSizeRow) {
+        item.label = tr(STR_SIZE);
+      } else if (i < kStyleStart) {
+        item.label = I18N.get(LAYOUT_ROW_NAME_IDS[i - kLayoutStart]);
+        if (i == kLayoutStart) item.sectionHeading = tr(STR_LAYOUT);
+      } else {
+        item.label = I18N.get(STYLE_ROW_NAME_IDS[i - kStyleStart]);
+        if (i == kStyleStart) item.sectionHeading = tr(STR_STYLE);
+      }
+      item.actionValue = static_cast<int16_t>(i);
+      rowItems_.push_back(item);
+    }
+    return;
+  }
   for (int i = 0; i < count; i++) {
     fui::ListItem item;
     switch (tab_) {
@@ -179,6 +218,10 @@ void TextSettingsActivity::activateIndex(const int index) {
   // Most rows repaint a different surface (popup, preview, new value);
   // a lingering tap flash would gray an unrelated element.
   app.clearTapFlash();
+  if (usesSingleList()) {
+    activateSingleListRow(index);
+    return;
+  }
   activateRow(index);
 }
 
@@ -193,7 +236,9 @@ bool TextSettingsActivity::handleButtons() {
   }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-    if (ringPos() == 0) {
+    if (usesSingleList()) {
+      if (ringPos() > 0) activateSingleListRow(ringPos() - 1);
+    } else if (ringPos() == 0) {
       switchTab();
     } else {
       activateRow(ringPos() - 1);
@@ -211,6 +256,28 @@ void TextSettingsActivity::buildScreen(UiScreen& screen) {
   const int captionHeight = renderer.getTextHeight(UI_10_FONT_ID) + metrics_.verticalSpacing;
   screen.setContentMarginFromScreen(
       fui::Insets{static_cast<int16_t>(tabTop), 0, static_cast<int16_t>(bottomReserved + captionHeight), 0});
+
+  const bool singleList = usesSingleList();
+  if (singleList) {
+    const int count = listCount();
+    for (int i = 0; i < count; i++) {
+      rowValues_[i] = singleListValueText(i);
+      rowItems_[i].value = rowValues_[i].c_str();
+    }
+    fui::ListProps props;
+    props.items = rowItems_.data();
+    props.count = static_cast<uint16_t>(rowItems_.size());
+    props.action = ACTION_ROW;
+    props.inputMask = fui::InputTouch;  // physical buttons stay in loop()
+    props.labelText = screen.theme().bodyText;
+    props.labelText.maxLines = 1;
+    props.valueText = screen.theme().bodyText;
+    props.valueInset = 0;
+    applySectionHeadingStyle(screen.theme(), props);
+    syncTabListViewport(screen, props);
+    screen.list(props);
+    return;
+  }
 
   buildTabBar(screen);
 
@@ -257,6 +324,7 @@ void TextSettingsActivity::buildScreen(UiScreen& screen) {
 }
 
 const char* TextSettingsActivity::confirmLabelText() const {
+  if (usesSingleList()) return tr(STR_SELECT);
   if (ringPos() == 0) {
     // Confirm on the tab bar advances to the next tab.
     return I18N.get(TAB_NAME_IDS[(static_cast<int>(tab_) + 1) % static_cast<int>(Tab::Count)]);
@@ -282,6 +350,8 @@ void TextSettingsActivity::drawChrome() {
   const char* sizeName = (currentSizeIndex_ >= 0 && currentSizeIndex_ < static_cast<int>(sizes_.size()))
                              ? sizes_[currentSizeIndex_].name.c_str()
                              : "";
+  // Single-list rows already name the font and size, so the preview drops its caption.
+  if (usesSingleList()) familyName = sizeName = nullptr;
   textsettings::renderPreview(renderer, previewLayout_, metrics_.previewPadding, metrics_.verticalSpacing, afterHeader,
                               previewHeight, familyName, sizeName);
 }
@@ -521,8 +591,15 @@ bool TextSettingsActivity::styleRowChecked(int row) const {
 // Only Focus Reading shows in the preview (bold prefixes); the other Style rows
 // have no distinct preview.
 bool TextSettingsActivity::focusedRowHasNoPreview() const {
-  if (ringPos() == 0 || tab_ != Tab::Style) return false;
-  const StyleRow row = static_cast<StyleRow>(ringPos() - 1);
+  if (ringPos() == 0) return false;
+  int styleRow = ringPos() - 1;
+  if (usesSingleList()) {
+    styleRow -= kStyleStart;
+    if (styleRow < 0) return false;
+  } else if (tab_ != Tab::Style) {
+    return false;
+  }
+  const StyleRow row = static_cast<StyleRow>(styleRow);
   return row == StyleRow::Hyphenation || row == StyleRow::EmbeddedStyle || row == StyleRow::AntiAliasing;
 }
 
@@ -538,6 +615,7 @@ void TextSettingsActivity::switchTab(const int direction) {
 }
 
 int TextSettingsActivity::listCount() const {
+  if (usesSingleList()) return kSingleListCount;
   switch (tab_) {
     case Tab::Family:
       return static_cast<int>(fonts_.size());
@@ -551,4 +629,78 @@ int TextSettingsActivity::listCount() const {
     default:
       return 0;
   }
+}
+
+void TextSettingsActivity::activateSingleListRow(const int row) {
+  if (row == kFontRow) {
+    if (fonts_.size() < 2) return;
+    applyFamily((currentFamilyIndex_ + 1) % static_cast<int>(fonts_.size()));
+    SETTINGS.saveToFile();  // outside applyFamily's RenderLock
+    requestUpdate();
+  } else if (row == kSizeRow) {
+    if (sizes_.size() < 2) return;
+    applySize((currentSizeIndex_ + 1) % static_cast<int>(sizes_.size()));
+    SETTINGS.saveToFile();
+    requestUpdate();
+  } else if (row < kStyleStart) {
+    cycleLayoutRow(row - kLayoutStart);
+  } else if (row < kSingleListCount) {
+    confirmStyleRow(row - kStyleStart);
+  }
+}
+
+// Steps a Layout setting to its next value, wrapping at the end.
+void TextSettingsActivity::cycleLayoutRow(const int row) {
+  switch (static_cast<LayoutRow>(row)) {
+    case LayoutRow::LineSpacing:
+      SETTINGS.lineSpacing = static_cast<uint8_t>((SETTINGS.lineSpacing + 1) % std::size(LINE_SPACING_IDS));
+      break;
+    case LayoutRow::WordSpacing: {
+      const int next = std::clamp<int>(SETTINGS.wordSpacing, WORD_SPACING_MIN, WORD_SPACING_MAX) + WORD_SPACING_STEP;
+      SETTINGS.wordSpacing = static_cast<uint8_t>(next > WORD_SPACING_MAX ? WORD_SPACING_MIN : next);
+      break;
+    }
+    case LayoutRow::CharacterSpacing:
+      SETTINGS.characterSpacing =
+          static_cast<uint8_t>((SETTINGS.characterSpacing + 1) % std::size(CHARACTER_SPACING_IDS));
+      break;
+    case LayoutRow::ParaSpacing:
+      SETTINGS.extraParagraphSpacing = !SETTINGS.extraParagraphSpacing;
+      break;
+    case LayoutRow::ParaIndentation:
+      SETTINGS.paragraphIndentSpaces = static_cast<uint8_t>((SETTINGS.paragraphIndentSpaces + 1) % 6);
+      break;
+    case LayoutRow::Alignment:
+      SETTINGS.paragraphAlignment = static_cast<uint8_t>((SETTINGS.paragraphAlignment + 1) % std::size(ALIGNMENT_IDS));
+      break;
+    case LayoutRow::ScreenMargin: {
+      const int next = std::clamp<int>(SETTINGS.screenMargin, MARGIN_MIN, MARGIN_MAX) + MARGIN_STEP;
+      SETTINGS.screenMargin = static_cast<uint8_t>(next > MARGIN_MAX ? MARGIN_MIN : next);
+      break;
+    }
+    default:
+      return;
+  }
+  SETTINGS.saveToFile();
+  requestUpdate();
+}
+
+std::string TextSettingsActivity::singleListValueText(const int row) const {
+  if (row == kFontRow) {
+    return currentFamilyIndex_ >= 0 && currentFamilyIndex_ < static_cast<int>(fonts_.size())
+               ? fonts_[currentFamilyIndex_].name
+               : "";
+  }
+  if (row == kSizeRow) {
+    return currentSizeIndex_ >= 0 && currentSizeIndex_ < static_cast<int>(sizes_.size())
+               ? sizes_[currentSizeIndex_].name
+               : "";
+  }
+  if (row < kStyleStart) {
+    if (row - kLayoutStart == static_cast<int>(LayoutRow::ParaSpacing)) {
+      return SETTINGS.extraParagraphSpacing ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
+    }
+    return layoutValueText(row - kLayoutStart);
+  }
+  return styleRowChecked(row - kStyleStart) ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
 }

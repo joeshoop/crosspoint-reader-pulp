@@ -4,6 +4,9 @@
 #include <HalFrontlight.h>
 #include <I18n.h>
 
+#include <algorithm>
+#include <iterator>
+
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
 #include "ReaderUtils.h"
@@ -23,6 +26,17 @@ EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInpu
       totalPages(totalPages),
       bookProgressPercent(bookProgressPercent) {
   buildMenuItems(menuItems, hasFootnotes, hasBookmarks, hasClippings);
+  // The menu sheet already offers its rows; this screen is its More page.
+  if (UITheme::getInstance().getMetrics().readerMenuSheet) {
+    menuItems.erase(std::remove_if(menuItems.begin(), menuItems.end(),
+                                   [](const MenuItem& item) {
+                                     return std::any_of(std::begin(kSheetItems), std::end(kSheetItems),
+                                                        [&item](const MenuItem& sheetItem) {
+                                                          return sheetItem.action == item.action;
+                                                        });
+                                   }),
+                    menuItems.end());
+  }
   buildMenuRowItems();
 }
 
@@ -91,6 +105,21 @@ void EpubReaderMenuActivity::activateIndex(const int index) {
   nav.selected = index;
 
   const auto selectedAction = menuItems[index].action;
+  const bool cycleInPlace = UITheme::getInstance().getMetrics().settingsCycleValues;
+  if (selectedAction == MenuAction::ROTATE_SCREEN && cycleInPlace) {
+    pendingOrientation = static_cast<uint8_t>((pendingOrientation + 1) % orientationLabels.size());
+    // Same immediate rotation as the picker below.
+    ReaderUtils::applyOrientation(renderer, pendingOrientation);
+    app.setDevice(uiTarget.deviceContext());
+    requestUpdate(true);
+    return;
+  }
+  if (selectedAction == MenuAction::AUTO_PAGE_TURN && cycleInPlace) {
+    selectedPageTurnOption = static_cast<uint8_t>((selectedPageTurnOption + 1) % pageTurnLabels.size());
+    requestUpdate();
+    return;
+  }
+
   if (selectedAction == MenuAction::ROTATE_SCREEN) {
     optionPopup.show(StrId::STR_ORIENTATION, orientationLabels.data(), static_cast<int>(orientationLabels.size()),
                      pendingOrientation, [this](int idx) {

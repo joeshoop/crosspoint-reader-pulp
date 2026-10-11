@@ -45,6 +45,11 @@ class ReaderToolbarUi : public UiAppHost {
     // Button boards keep the theme's denser list row height (as every other
     // list does there); touch boards use FreeInkUI's finger-sized rows.
     bool denseRows = false;
+    // Menu sheet (readerMenuSheet themes): a panel with no tool row, the title
+    // and subtitle set as a centered heading, and rows styled like the
+    // theme's full-screen lists. Uses panelTitle, itemCount and rowText.
+    bool menuSheet = false;
+    const char* panelSubtitle = nullptr;
   };
 
   struct Routed {
@@ -81,6 +86,7 @@ class ReaderToolbarUi : public UiAppHost {
   static void onAction(const freeink::ui::ActionEvent& event, void* user);
   void buildToolbar(UiScreen& screen);
   void buildPanel(UiScreen& screen);
+  void buildMenuSheet(UiScreen& screen);
   void buildToolRow(UiScreen& screen, freeink::ui::LayoutAnchor anchor, int16_t sideInset);
 
   Model model_;

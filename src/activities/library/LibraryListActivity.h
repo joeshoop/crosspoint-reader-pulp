@@ -51,6 +51,10 @@ class LibraryListActivity final : public UiTabListActivity {
   bool handleCustomInput() override;
   bool handleButtons() override;
   void navigateButtons() override;
+  // Shelf sections: File Transfer, Recent, On This Device.
+  bool rowStartsSection(int row) const override {
+    return row == 0 || (bookShelf() && (row == shelfRows() || row == shelfRows() + pinnedCount()));
+  }
   // The FreeInkUI header owns both the title and search touch target.
   void drawChrome() override {}
   void drawFooter() override;
@@ -125,6 +129,14 @@ class LibraryListActivity final : public UiTabListActivity {
   // row 0 as the working selection exactly as the pre-ring code did.
   int selectedEntry() const;
   bool tabsFocused() const { return ringPos() == 0; }
+
+  // --- Books shelf (themes with libraryBookShelf) -----------------------------
+  // No strip: list row 0 is File Transfer and the books follow, always on the
+  // Recent shelf. shelfRows() is that leading row count (0 or 1).
+  static bool bookShelf();
+  static int shelfRows() { return bookShelf() ? 1 : 0; }
+  bool onFileTransferRow() const { return bookShelf() && ringPos() == 1; }
+  void buildShelfRows(UiScreen& screen);
 
   // --- pinned recently-opened overlay ---------------------------------------
   // On the unfiltered Recent shelf the RecentBooksStore entries sit on top, in

@@ -213,6 +213,17 @@ class SettingsActivity final : public UiTabListActivity {
   void stepTab(int direction) override;
   bool handleButtons() override;
   bool handleCustomInput() override;
+  void navigateButtons() override;
+  bool rowStartsSection(int row) const override;
+
+  // Single-list themes (settingsSingleList) show every category in one list,
+  // each under its own heading, with no tab bar. The category vectors are
+  // moved into allSettings, so the rows are not held twice.
+  std::vector<SettingInfo> allSettings;
+  int sectionStarts[categoryCount] = {};
+  static bool usesSingleList();
+  // Ring position of the selection: 0 is the tab bar, rows start at 1.
+  int ring() { return activeNav().selected; }
 
   static std::string settingValueText(const SettingInfo& setting);
   void selectCategory(int categoryIndex);

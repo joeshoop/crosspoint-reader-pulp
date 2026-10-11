@@ -1,4 +1,6 @@
 #pragma once
+#include "CrossPointSettings.h"
+#include "components/UITheme.h"
 #include "fontIds.h"
 
 // FreeInkUI font slots. Row heights, header height, and touch sizes are not
@@ -13,6 +15,14 @@ struct UIScaleSpec {
 
 inline UIScaleSpec uiScaleSpec() {
   UIScaleSpec spec{};
+  if (UITheme::getInstance().getMetrics().uiUsesReaderFont) {
+    // Book-styled themes set every slot in the reader font, at one size.
+    const int readerFontId = SETTINGS.getReaderFontId();
+    spec.smallFontId = readerFontId;
+    spec.bodyFontId = readerFontId;
+    spec.titleFontId = readerFontId;
+    return spec;
+  }
   spec.smallFontId = UI_10_FONT_ID;
   spec.bodyFontId = UI_12_FONT_ID;
   // Titles use the UI font, not a reader font: fui headers draw book and

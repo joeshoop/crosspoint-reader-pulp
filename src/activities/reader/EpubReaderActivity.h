@@ -61,8 +61,9 @@ class EpubReaderActivity final : public ReaderActivity {
 
   // Toolbar reader menu (SETTINGS.readerMenuStyle == READER_MENU_TOOLBAR): drawn
   // over the page instead of pushing the full-screen list menu. Select opens the
-  // Toolbar; its tools open the Contents/Text/More bottom-sheet panels.
-  enum class Overlay { None, Toolbar, Contents, Text, More };
+  // Toolbar; its tools open the Contents/Text/More bottom-sheet panels. Themes
+  // with readerMenuSheet open Menu instead: a short list sheet, nothing else.
+  enum class Overlay { None, Toolbar, Contents, Text, More, Menu };
   Overlay overlay = Overlay::None;
   int focusedTool = 0;  // toolbar tool focus: 0=Contents, 1=Text, 2=More
   int panelIndex = 0;   // selected row within the active panel
@@ -154,6 +155,9 @@ class EpubReaderActivity final : public ReaderActivity {
   void openReaderMenu();
   // Toolbar reader menu (see Overlay above).
   bool usesToolbarMenu() const;
+  static bool usesMenuSheet();
+  // The overlay Select opens: the toolbar, or the menu sheet.
+  static Overlay rootOverlay() { return usesMenuSheet() ? Overlay::Menu : Overlay::Toolbar; }
   void openOverlay(Overlay target);
   void closeOverlayToPage();
   void discardOverlayPage();
@@ -175,6 +179,11 @@ class EpubReaderActivity final : public ReaderActivity {
   std::string moreRowName(int row) const;
   std::string moreRowValue(int row) const;
   void activateMoreRow(int row);
+  // Close the overlay and run an action that opens a screen or leaves the reader.
+  void runLeafMenuAction(EpubReaderMenuActivity::MenuAction action);
+  // Menu sheet rows (readerMenuSheet themes); the last row opens the full menu.
+  void activateMenuSheetRow(int row);
+  void openListMenu();
   void openFootnoteSelect(bool reopenMenuOnCancel);
   void openDictionaryWordSelect();
   void startClipSelection(int initialX = -1, int initialY = -1,

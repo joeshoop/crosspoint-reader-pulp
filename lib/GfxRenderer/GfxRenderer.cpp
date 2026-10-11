@@ -337,6 +337,10 @@ void GfxRenderer::prewarmFallbackText(const int fontId, const char* text, const 
   }
 }
 
+bool GfxRenderer::needsSdGlyphLoad(const int requestedFontId, const int resolvedFontId) const {
+  return resolvedFontId != requestedFontId || fontCacheManager_ == nullptr || !fontCacheManager_->inPrewarmScope();
+}
+
 void GfxRenderer::ensureSdGlyphsResident(const int fontId, const char* text, const EpdFontFamily::Style style,
                                          const bool metadataOnly) const {
   const auto sdIt = sdCardFonts_.find(fontId);
@@ -676,10 +680,10 @@ int GfxRenderer::getTextWidth(const int fontId, const char* text, const EpdFontF
   std::string visual;
   const char* renderedText = resolveVisualText(text, visual, baseDir);
 
-  // Redirected to the SD fallback: batch-load the string's glyphs so the
+  // SD-font text outside a page render (fallback or UI): batch-load the string's glyphs so the
   // per-codepoint measurement loop below doesn't fault them in one SD read
   // at a time (#2725).
-  if (resolvedFontId != fontId) {
+  if (needsSdGlyphLoad(fontId, resolvedFontId)) {
     ensureSdGlyphsResident(resolvedFontId, renderedText, style, true);
   }
 
@@ -729,9 +733,9 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
     return;
   }
 
-  // Redirected to the SD fallback: batch-load the string's glyphs so the draw
+  // SD-font text outside a page render (fallback or UI): batch-load the string's glyphs so the draw
   // loop below doesn't fault them in one SD read at a time (#2725).
-  if (resolvedFontId != fontId) {
+  if (needsSdGlyphLoad(fontId, resolvedFontId)) {
     ensureSdGlyphsResident(resolvedFontId, renderedText, style, false);
   }
 
@@ -2219,6 +2223,18 @@ int GfxRenderer::getLineHeight(const int fontId) const {
   return fontIt->second.getData(EpdFontFamily::REGULAR)->advanceY;
 }
 
+int GfxRenderer::getCenteringHeight(const int fontId) const {
+  const auto fontIt = fontMap.find(fontId);
+  if (fontIt == fontMap.end()) {
+    LOG_ERR("GFX", "Font %d not found", fontId);
+    return 0;
+  }
+  const EpdFontData* data = fontIt->second.getData(EpdFontFamily::REGULAR);
+  // Built-in and SD fonts store a negative descender; vector fonts a positive one.
+  const int glyphBox = data->ascender + std::abs(data->descender);
+  return glyphBox > 0 && glyphBox < data->advanceY ? glyphBox : data->advanceY;
+}
+
 int GfxRenderer::getLineHeight(const int fontId, const float compression) const {
   return static_cast<int>(getLineHeight(fontId) * compression + 0.5f);
 }
@@ -2241,9 +2257,9 @@ void GfxRenderer::drawTextRotated90CW(const int fontId, const int x, const int y
 
   // Route non-Latin strings to the fallback font (see resolveTextFontId).
   const int resolvedFontId = resolveTextFontId(fontId, text, style);
-  // Redirected to the SD fallback: batch-load the string's glyphs so the draw
+  // SD-font text outside a page render (fallback or UI): batch-load the string's glyphs so the draw
   // loop below doesn't fault them in one SD read at a time (#2725).
-  if (resolvedFontId != fontId) {
+  if (needsSdGlyphLoad(fontId, resolvedFontId)) {
     ensureSdGlyphsResident(resolvedFontId, text, style, false);
   }
   const auto fontIt = fontMap.find(resolvedFontId);

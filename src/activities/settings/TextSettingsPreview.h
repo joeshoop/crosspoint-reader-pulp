@@ -23,6 +23,7 @@ struct PreviewKey {
   uint8_t wordSpacingPercent = 100;
   bool focusReading = false;
   bool hyphenation = false;
+  uint32_t excerptGeneration = 0;  // reader excerpt the lines came from (0 = stock sample)
   bool operator==(const PreviewKey&) const = default;
 };
 
@@ -32,10 +33,13 @@ struct PreviewLayout {
   ~PreviewLayout();
 
   std::vector<std::unique_ptr<TextBlock>> lines;
+  std::vector<bool> paragraphEnds;  // per line: last line of a book paragraph
+  bool fromBook = false;            // lines are the current page's text, drawn once
   PreviewKey key;
 };
 
-// Draws the sample-text pane via the reader engine, reusing layout across redraws
+// Draws the sample-text pane via the reader engine, reusing layout across redraws.
+// Null familyName/sizeName omit the "Preview" caption.
 void renderPreview(const GfxRenderer& renderer, PreviewLayout& layout, int previewPadding, int labelGap, int top,
                    int height, const char* familyName, const char* sizeName);
 

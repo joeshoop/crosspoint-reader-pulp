@@ -61,10 +61,8 @@ inline void applySharedUiTheme(App& app, const freeink::ui::GfxRendererTarget& t
   app.setThemeRef(&sharedUiThemeCell());
 }
 
-// Bind the uiScale fonts before FreeInkApp's constructor derives its theme
-// metrics from the body font's line height.
-inline freeink::ui::GfxRendererTarget makeUiTarget(const GfxRenderer& renderer) {
-  freeink::ui::GfxRendererTarget target(renderer, BoardConfig::hasTouch());
+// Point the target's font slots at the current uiScale fonts.
+inline void bindUiFonts(freeink::ui::GfxRendererTarget& target) {
   const auto spec = uiScaleSpec();
   target.setFont(freeink::ui::GfxRendererTarget::FONT_SMALL, spec.smallFontId);
   target.setFont(freeink::ui::GfxRendererTarget::FONT_BODY, spec.bodyFontId);
@@ -72,6 +70,13 @@ inline freeink::ui::GfxRendererTarget makeUiTarget(const GfxRenderer& renderer) 
   // Status chrome (header battery percent, clock) stays at the fixed small
   // font; the uiScale FONT_SMALL is for list subtitles.
   target.setFont(freeink::ui::GfxRendererTarget::FONT_LABEL, SMALL_FONT_ID);
+}
+
+// Bind the uiScale fonts before FreeInkApp's constructor derives its theme
+// metrics from the body font's line height.
+inline freeink::ui::GfxRendererTarget makeUiTarget(const GfxRenderer& renderer) {
+  freeink::ui::GfxRendererTarget target(renderer, BoardConfig::hasTouch());
+  bindUiFonts(target);
   return target;
 }
 

@@ -247,11 +247,56 @@ inline SettingInfo buildShortPowerButtonSetting() {
                                   setShortPowerButtonFromDisplayValue, "shortPwrBtn", StrId::STR_CAT_CONTROLS);
 }
 
+// Display order of the theme picker. Cover Grid is listed only on PSRAM boards,
+// so display indices differ from the stored UI_THEME values.
+inline std::vector<CrossPointSettings::UI_THEME> homeThemeOrder() {
+  std::vector<CrossPointSettings::UI_THEME> order = {CrossPointSettings::CLASSIC, CrossPointSettings::LYRA,
+                                                     CrossPointSettings::LYRA_3_COVERS, CrossPointSettings::ROUNDEDRAFF,
+                                                     CrossPointSettings::PULP};
+  if (UITheme::supportsCoverGrid()) order.push_back(CrossPointSettings::COVER_GRID);
+  return order;
+}
+
 inline std::vector<StrId> homeThemeValues() {
-  static constexpr StrId VALUES[] = {StrId::STR_THEME_CLASSIC, StrId::STR_THEME_LYRA, StrId::STR_THEME_LYRA_EXTENDED,
-                                     StrId::STR_THEME_ROUNDEDRAFF, StrId::STR_THEME_COVER_GRID};
-  const size_t count = UITheme::supportsCoverGrid() ? std::size(VALUES) : std::size(VALUES) - 1;
-  return {VALUES, VALUES + count};
+  const auto order = homeThemeOrder();
+  std::vector<StrId> values;
+  values.reserve(order.size());
+  for (const auto theme : order) {
+    switch (theme) {
+      case CrossPointSettings::CLASSIC:
+        values.push_back(StrId::STR_THEME_CLASSIC);
+        break;
+      case CrossPointSettings::LYRA:
+        values.push_back(StrId::STR_THEME_LYRA);
+        break;
+      case CrossPointSettings::LYRA_3_COVERS:
+        values.push_back(StrId::STR_THEME_LYRA_EXTENDED);
+        break;
+      case CrossPointSettings::ROUNDEDRAFF:
+        values.push_back(StrId::STR_THEME_ROUNDEDRAFF);
+        break;
+      case CrossPointSettings::COVER_GRID:
+        values.push_back(StrId::STR_THEME_COVER_GRID);
+        break;
+      case CrossPointSettings::PULP:
+        values.push_back(StrId::STR_THEME_PULP);
+        break;
+    }
+  }
+  return values;
+}
+
+inline uint8_t homeThemeDisplayValue() {
+  const auto order = homeThemeOrder();
+  const auto it = std::find(order.begin(), order.end(), SETTINGS.uiTheme);
+  // Unlisted (Cover Grid on a non-PSRAM board) renders as Lyra, its fallback.
+  if (it == order.end()) return 1;
+  return static_cast<uint8_t>(it - order.begin());
+}
+
+inline void setHomeThemeFromDisplayValue(const uint8_t displayValue) {
+  const auto order = homeThemeOrder();
+  if (displayValue < order.size()) SETTINGS.uiTheme = order[displayValue];
 }
 
 // Shared settings list used by both the device settings UI and the web settings API.
@@ -309,8 +354,8 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                           {StrId::STR_PAGES_1, StrId::STR_PAGES_5, StrId::STR_PAGES_10, StrId::STR_PAGES_15,
                            StrId::STR_PAGES_30, StrId::STR_NEVER},
                           "refreshFrequency", StrId::STR_CAT_DISPLAY),
-        SettingInfo::Enum(StrId::STR_UI_THEME, &CrossPointSettings::uiTheme, homeThemeValues(), "uiTheme",
-                          StrId::STR_CAT_DISPLAY),
+        SettingInfo::DynamicEnum(StrId::STR_UI_THEME, homeThemeValues(), homeThemeDisplayValue,
+                                 setHomeThemeFromDisplayValue, "uiTheme", StrId::STR_CAT_DISPLAY),
         SettingInfo::Toggle(StrId::STR_SUNLIGHT_FADING_FIX, &CrossPointSettings::fadingFix, "fadingFix",
                             StrId::STR_CAT_DISPLAY),
 #if FREEINK_CAP_FRONTLIGHT

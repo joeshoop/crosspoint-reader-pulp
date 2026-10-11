@@ -59,6 +59,8 @@ class CrossPointWebServerActivity final : public Activity {
   int lastWifiBars = 0;
 
   void renderServerRunning() const;
+  // Book-styled themes: label/value rows and a large framed QR code.
+  void renderServerRunningRows() const;
   void renderWifiIndicator(int subHeaderTop) const;
 
   void onNetworkModeSelected(NetworkMode mode);
