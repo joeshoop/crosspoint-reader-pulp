@@ -227,6 +227,9 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // Night mode: inverted output polarity, applied to every activity per
   // render by ActivityManager. The sleep screen opts out itself.
   uint8_t screenInverted = 0;
+  // On-screen button labels (hints): shown, or hidden everywhere.
+  enum BUTTON_LABELS { LABELS_SHOW = 0, LABELS_HIDE = 1 };
+  uint8_t buttonLabels = LABELS_SHOW;
   // Sleep screen cover mode settings
   uint8_t sleepScreenCoverMode = FIT;
   // Sleep screen cover filter

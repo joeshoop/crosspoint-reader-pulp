@@ -51,6 +51,7 @@ void catalogScreenHeader(UiAppHost::UiScreen& screen, const GfxRenderer& rendere
   header.trailingStyles = fui::plainStyles(fui::Paint::solid(fui::Color::Black));
   header.sidePadding = theme.headerSidePadding;
   header.minTouchSize = theme.minTouchSize;
+  UITheme::noteHeaderBand(metrics.topPadding, metrics.headerHeight);
   fui::header(screen.frame(),
               fui::Rect{frameRect.x, static_cast<int16_t>(metrics.topPadding), frameRect.width,
                         static_cast<int16_t>(metrics.headerHeight)},

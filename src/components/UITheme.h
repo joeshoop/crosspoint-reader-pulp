@@ -50,6 +50,11 @@ class UITheme {
   // padding, a reader-font line, padding. 0 unless the theme puts it at the top.
   static int getStatusBarTopHeight(const GfxRenderer& renderer);
   static constexpr int kStatusBarTopPadding = 10;
+  // The header band of the screen last rendered (height 0 when it had none),
+  // so the sleep notice can take the header's place.
+  static void noteHeaderBand(int y, int height);
+  static int headerBandY();
+  static int headerBandHeight();
 
  private:
   BaseTheme fallbackTheme;
@@ -58,6 +63,7 @@ class UITheme {
   mutable ThemeMetrics adjustedMetrics;
   mutable bool metricsValid = false;
   mutable bool metricsForTouch = false;
+  mutable bool metricsForHiddenHints = false;
 };
 
 // Helper macro to access current theme

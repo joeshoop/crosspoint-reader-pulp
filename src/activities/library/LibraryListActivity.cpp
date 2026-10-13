@@ -1196,6 +1196,7 @@ void LibraryListActivity::buildHeader(UiScreen& screen) {
   }
   const auto frameRect = screen.frame().screen();
   // Header and tabs share a screen-relative boundary, independent of bezel insets.
+  UITheme::noteHeaderBand(metrics.topPadding, metrics.headerHeight);
   fui::header(screen.frame(),
               fui::Rect{frameRect.x, static_cast<int16_t>(metrics.topPadding), frameRect.width,
                         static_cast<int16_t>(metrics.headerHeight)},

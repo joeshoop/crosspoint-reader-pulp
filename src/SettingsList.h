@@ -366,6 +366,8 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
         // applies it to every activity), so it lives in the Display category.
         SettingInfo::Toggle(StrId::STR_NIGHT_MODE, &CrossPointSettings::screenInverted, "screenInverted",
                             StrId::STR_CAT_DISPLAY),
+        SettingInfo::Enum(StrId::STR_BUTTON_LABELS, &CrossPointSettings::buttonLabels,
+                          {StrId::STR_SHOW, StrId::STR_HIDE}, "buttonLabels", StrId::STR_CAT_DISPLAY),
 
         // --- Reader ---
         // Built-in font-family entry. Replaced per-call with a registry-aware

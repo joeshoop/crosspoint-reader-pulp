@@ -38,4 +38,6 @@ class EpubReaderClippingListActivity final : public UiListActivity {
   int windowCount = 0;
   OptionPopup confirmPopup;
   bool confirmingDelete = false;
+  // Select held past the delete threshold: the hint says to release.
+  bool deleteArmed = false;
 };

@@ -26,9 +26,9 @@
 #include "activities/reader/ReaderUtils.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
-#include "util/BookProgress.h"
 #include "images/Logo120.h"
 #include "images/MoonIcon.h"
+#include "util/BookProgress.h"
 
 namespace {
 // The reader's progress ribbon, in the same place, so it stays put going to
@@ -492,7 +492,71 @@ bool selectRandomSleepFile(const char* dirPath, const SleepRecentKind recentKind
   return true;
 }
 
+// Where the sleep notice goes in place of the page's own top line: the
+// reader's running head, else (book-style themes) the screen's header. Empty
+// (height 0) means the popup.
+struct NoticeBand {
+  int y = 0;
+  int height = 0;
+};
+
+NoticeBand sleepNoticeBand(const GfxRenderer& renderer) {
+  const int headHeight = UITheme::getStatusBarTopHeight(renderer);
+  if (APP_STATE.lastSleepFromReader) {
+    if (headHeight == 0) return {};
+    int top, right, bottom, left;
+    renderer.getOrientedViewableTRBL(&top, &right, &bottom, &left);
+    return {top, headHeight};
+  }
+  if (!UITheme::getInstance().getMetrics().statusBarBookStyle) return {};
+  return {UITheme::headerBandY(), UITheme::headerBandHeight()};
+}
+
+// Set like the reader's running-head notices: the title line, italic in the
+// reader font on book-style themes. Returns the cleared band's bottom, or 0
+// after falling back to the popup.
+int drawSleepNotice(GfxRenderer& renderer) {
+  const NoticeBand band = sleepNoticeBand(renderer);
+  if (band.height == 0) {
+    GUI.drawPopup(renderer, tr(STR_ENTERING_SLEEP));
+    return 0;
+  }
+  const bool bookStyle = UITheme::getInstance().getMetrics().statusBarBookStyle;
+  const int readerFontId = SETTINGS.getReaderFontId();
+  const int fontId = bookStyle ? readerFontId : SMALL_FONT_ID;
+  const auto style = bookStyle ? EpdFontFamily::ITALIC : EpdFontFamily::REGULAR;
+  // In the reader, the running head's title baseline (BaseTheme::drawStatusBar);
+  // elsewhere, centred in the header band.
+  const int y = APP_STATE.lastSleepFromReader
+                    ? band.y + UITheme::kStatusBarTopPadding + renderer.getFontAscenderSize(readerFontId) -
+                          renderer.getFontAscenderSize(fontId)
+                    : band.y + (band.height - renderer.getLineHeight(fontId)) / 2;
+  const int bottom = band.y + band.height;
+  renderer.fillRect(0, 0, renderer.getScreenWidth(), bottom, false);
+  renderer.drawCenteredText(fontId, std::max(0, y), tr(STR_ENTERING_SLEEP), true, style);
+  renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+  return bottom;
+}
+
 bool drawSleepPopupPreservingFrame(GfxRenderer& renderer) {
+  const NoticeBand notice = sleepNoticeBand(renderer);
+  const int headBand = notice.y + notice.height;
+  if (notice.height > 0) {
+    const size_t headBytes = renderer.getRegionByteSize(0, 0, renderer.getScreenWidth(), headBand);
+    auto savedHead = makeUniqueNoThrow<uint8_t[]>(headBytes);
+    if (!savedHead ||
+        !renderer.copyRegionToBuffer(0, 0, renderer.getScreenWidth(), headBand, savedHead.get(), headBytes)) {
+      LOG_ERR("SLP", "Failed to save running head (%u bytes)", static_cast<unsigned>(headBytes));
+      return false;
+    }
+    drawSleepNotice(renderer);
+    if (!renderer.copyBufferToRegion(0, 0, renderer.getScreenWidth(), headBand, savedHead.get(), headBytes)) {
+      LOG_ERR("SLP", "Failed to restore running head");
+      return false;
+    }
+    return true;
+  }
+
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int frameThickness = metrics.popupFrameThickness;
   const int popupY = static_cast<int>(renderer.getScreenHeight() * metrics.popupTopOffsetRatio);
@@ -572,10 +636,10 @@ void SleepActivity::onEnter() {
   // Show popup with reader orientation only when going to sleep from reader
   if (APP_STATE.lastSleepFromReader) {
     ReaderUtils::applyOrientation(renderer, SETTINGS.orientation);
-    GUI.drawPopup(renderer, tr(STR_ENTERING_SLEEP));
+    drawSleepNotice(renderer);
     renderer.setOrientation(GfxRenderer::Orientation::Portrait);
   } else {
-    GUI.drawPopup(renderer, tr(STR_ENTERING_SLEEP));
+    drawSleepNotice(renderer);
   }
 
   switch (SETTINGS.sleepScreen) {

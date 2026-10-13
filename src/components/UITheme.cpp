@@ -83,13 +83,16 @@ void UITheme::setTheme(CrossPointSettings::UI_THEME type) {
 const ThemeMetrics& UITheme::getMetrics() const {
   // hasTouch() can flip once touch init completes after static construction, so the
   // cached copy is refreshed when the flag differs instead of copying the struct per call.
+  // Hidden labels free their row the same way.
   const bool touch = gpio.hasTouch();
-  if (!metricsValid || touch != metricsForTouch) {
+  const bool hidden = BaseTheme::buttonHintsHidden();
+  if (!metricsValid || touch != metricsForTouch || hidden != metricsForHiddenHints) {
     adjustedMetrics = *currentMetrics;
-    if (touch) {
+    if (hidden) {
       adjustedMetrics.buttonHintsHeight = 0;
     }
     metricsForTouch = touch;
+    metricsForHiddenHints = hidden;
     metricsValid = true;
   }
   return adjustedMetrics;
@@ -171,6 +174,18 @@ int UITheme::getStatusBarHeight() {
   return (sb.textLaneVisible(true) ? (metrics.statusBarVerticalMargin) : 0) +
          (sb.showsProgressBar() ? (sb.progressBarHeightPx + metrics.progressBarMarginTop) : 0);
 }
+
+namespace {
+int headerBandY_ = 0;
+int headerBandHeight_ = 0;
+}  // namespace
+
+void UITheme::noteHeaderBand(const int y, const int height) {
+  headerBandY_ = y;
+  headerBandHeight_ = height;
+}
+int UITheme::headerBandY() { return headerBandY_; }
+int UITheme::headerBandHeight() { return headerBandHeight_; }
 
 int UITheme::getStatusBarTopHeight(const GfxRenderer& renderer) {
   if (!UITheme::getInstance().getMetrics().statusBarTextAtTop || !SETTINGS.statusBarSpec().textLaneVisible(true)) {

@@ -77,28 +77,24 @@ void EpubReaderClippingListActivity::refreshRowWindow(const int start) {
   windowStart = clamped;
 }
 
+// Select goes straight to the passage. A clipping without a text anchor
+// cannot be placed, so it opens as text instead.
 void EpubReaderClippingListActivity::openSelected() {
   if (confirmPopup.isActive() || nav.selected < 0 || nav.selected >= listCount()) return;
   const Clipping* clipping = CLIPPINGS.clippingAt(static_cast<size_t>(nav.selected));
   if (!clipping) return;
-  static constexpr StrId OPTIONS[] = {StrId::STR_OPEN, StrId::STR_GO_TO_PASSAGE};
   const bool anchored = clipping->startOffset != UINT32_MAX && clipping->endOffset != UINT32_MAX;
-  confirmPopup.show(StrId::STR_CLIPPINGS, OPTIONS, anchored ? 2 : 1, 0, [this](const int index) {
-    if (index == 0) {
-      readSelected();
-      return;
-    }
-    const Clipping* selectedClipping = CLIPPINGS.clippingAt(static_cast<size_t>(nav.selected));
-    if (!selectedClipping) return;
-    ProgressChangeResult result;
-    result.spineIndex = selectedClipping->spineIndex;
-    result.page = selectedClipping->startPage;
-    result.hasVisibleTextOffset = true;
-    result.visibleTextOffset = selectedClipping->startOffset;
-    setResult(std::move(result));
-    finish();
-  });
-  requestUpdate();
+  if (!anchored) {
+    readSelected();
+    return;
+  }
+  ProgressChangeResult result;
+  result.spineIndex = clipping->spineIndex;
+  result.page = clipping->startPage;
+  result.hasVisibleTextOffset = true;
+  result.visibleTextOffset = clipping->startOffset;
+  setResult(std::move(result));
+  finish();
 }
 
 void EpubReaderClippingListActivity::readSelected() {
@@ -171,7 +167,14 @@ bool EpubReaderClippingListActivity::handleButtons() {
     finish();
     return true;
   }
+  if (!deleteArmed && mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
+      mappedInput.getHeldTime() > ENTER_DELETE_MODE_MS) {
+    deleteArmed = true;
+    requestUpdate();
+    return true;
+  }
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    deleteArmed = false;
     if (mappedInput.getHeldTime() > ENTER_DELETE_MODE_MS) {
       showDeleteConfirmation();
     } else {
@@ -199,7 +202,7 @@ void EpubReaderClippingListActivity::buildScreen(UiScreen& screen) {
     const int helpHeight = renderer.getLineHeight(themedFontId(UI_10_FONT_ID));
     const fui::Rect band = screen.takeBottom(static_cast<int16_t>(helpHeight + metrics.verticalSpacing));
     GUI.drawHelpText(renderer, Rect{band.x, band.y + metrics.verticalSpacing, band.width, helpHeight},
-                     tr(STR_HOLD_SELECT_TO_DELETE));
+                     deleteArmed ? tr(STR_RELEASE_TO_DELETE) : tr(STR_HOLD_SELECT_TO_DELETE));
   }
 
   fui::ListProps props;
@@ -213,7 +216,10 @@ void EpubReaderClippingListActivity::buildScreen(UiScreen& screen) {
     props.subtitleText.italic = true;
     props.labelText = screen.theme().bodyText;
     props.labelText.maxLines = 3;
-    props.subtitleGap = static_cast<int16_t>(metrics.verticalSpacing / 2);
+    props.subtitleGap = 0;  // the chapter is simply the next line
+    // Clear air between clippings, so each caption reads with the clipping
+    // above it.
+    props.rowGap = static_cast<int16_t>(metrics.verticalSpacing * 2);
   }
   syncListViewport(screen, props);
   refreshRowWindow(nav.top);

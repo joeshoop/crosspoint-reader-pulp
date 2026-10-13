@@ -376,6 +376,25 @@ void EpubReaderActivity::showNotice(const StrId text) {
   noticeTime = millis();
 }
 
+// A running-head notice repaints only the head over the page still in the
+// framebuffer: a full render would redo the page, and on image pages its
+// grayscale pass, for each change of a few words.
+void EpubReaderActivity::repaintNotice() {
+  if (section && overlay == Overlay::None && !loadFailurePopup.isActive() &&
+      UITheme::getStatusBarTopHeight(renderer) > 0) {
+    RenderLock lock;
+    if (!pageBufferStale) {
+      int marginTop, marginRight, marginBottom, marginLeft;
+      renderer.getOrientedViewableTRBL(&marginTop, &marginRight, &marginBottom, &marginLeft);
+      renderer.fillRect(0, 0, renderer.getScreenWidth(), marginTop + UITheme::getStatusBarTopHeight(renderer), false);
+      renderStatusBar();
+      renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+      return;
+    }
+  }
+  requestUpdate();
+}
+
 void EpubReaderActivity::openDictionaryWordSelect() {
   if (SETTINGS.dictionaryName[0] == '\0') {
     showNotice(StrId::STR_DICT_NO_DICT_SET);
@@ -671,10 +690,10 @@ void EpubReaderActivity::loop() {
     noticePending = false;
     noticeShown = true;
     noticeTime = millis();
-    requestUpdate();
+    repaintNotice();
   } else if (noticeShown && (millis() - noticeTime) >= ReaderUtils::BOOKMARK_MESSAGE_DURATION_MS) {
     noticeShown = false;
-    requestUpdate();
+    repaintNotice();
   }
 
   // The toolbar reader menu owns all input while shown, ahead of the automatic page turn
@@ -1217,7 +1236,10 @@ unsigned long EpubReaderActivity::confirmLongPressThreshold() const {
 }
 
 bool EpubReaderActivity::launchKOReaderSync() {
-  if (!KOREADER_STORE.hasCredentials()) return false;
+  if (!KOREADER_STORE.hasCredentials()) {
+    showNotice(StrId::STR_SYNC_SETUP_HINT);
+    return false;
+  }
 
   RenderLock renderLock;
 

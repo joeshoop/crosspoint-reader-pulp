@@ -340,9 +340,13 @@ void BaseTheme::drawHintLabel(const GfxRenderer& renderer, const int fontId, con
   }
 }
 
+bool BaseTheme::buttonHintsHidden() {
+  return gpio.hasTouch() || SETTINGS.buttonLabels == CrossPointSettings::LABELS_HIDE;
+}
+
 void BaseTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,
                                 const char* btn4) const {
-  if (gpio.hasTouch()) {
+  if (buttonHintsHidden()) {
     return;
   }
 
@@ -377,7 +381,7 @@ void BaseTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const c
 }
 
 void BaseTheme::drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn) const {
-  if (gpio.hasTouch()) {
+  if (buttonHintsHidden()) {
     return;
   }
 
@@ -579,6 +583,7 @@ void BaseTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* t
     props.styles.normal.border = fui::Paint::solid(fui::Color::Black);
     props.styles.normal.borderWidth = tokens.headerUnderline;
   }
+  UITheme::noteHeaderBand(band.y, band.height);
   fui::header(ui.frame, band, props);
 }
 

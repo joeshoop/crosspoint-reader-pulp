@@ -50,6 +50,7 @@ class EpubReaderActivity final : public ReaderActivity {
   static constexpr unsigned long kNoticeDelayMs = 500;
   bool noticePending = false;
   bool noticeShown = false;
+  void repaintNotice();
   StrId noticeText = StrId::STR_BOOKMARK_ADDED;
   unsigned long noticeTime = 0UL;
   void showNotice(StrId text);

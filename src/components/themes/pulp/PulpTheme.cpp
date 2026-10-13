@@ -660,7 +660,7 @@ void PulpTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount
 
 void PulpTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,
                                 const char* btn4) const {
-  if (gpio.hasTouch()) {
+  if (buttonHintsHidden()) {
     return;
   }
 
@@ -711,7 +711,7 @@ void PulpTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const c
 // set like the bottom hints: Up reads from the top end, Down from the bottom.
 // Edge-button boards keep the base layout.
 void PulpTheme::drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn) const {
-  if (gpio.hasTouch()) return;
+  if (buttonHintsHidden()) return;
   if (gpio.hasEdgeSideButtons()) {
     BaseTheme::drawSideButtonHints(renderer, topBtn, bottomBtn);
     return;
@@ -723,7 +723,7 @@ void PulpTheme::drawSideButtonHints(const GfxRenderer& renderer, const char* top
 }
 
 void PulpTheme::drawPowerButtonHint(const GfxRenderer& renderer, const char* label) const {
-  if (gpio.hasTouch() || gpio.hasEdgeSideButtons() || label == nullptr || label[0] == '\0') return;
+  if (buttonHintsHidden() || gpio.hasEdgeSideButtons() || label == nullptr || label[0] == '\0') return;
   // X4 power button, near the top of the right edge.
   constexpr int kTabTop = 130;
   constexpr int kTextInset = kTabTextInset + 6;  // a little longer than the label needs, label centered
