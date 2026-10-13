@@ -11,6 +11,7 @@
 // std::unique_ptr<Activity> members. Destroying that unique_ptr needs the complete type, so the
 // definition must be visible here.
 #include "activities/Activity.h"
+#include "components/UIScale.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/ButtonNavigator.h"
@@ -161,8 +162,8 @@ void EndOfBookOptions::buildListScreen(UiScreen& screen) {
   // draws, and stops above the button hints (the safe-area bottom edge).
   const Rect safe = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
   const int titleY = safe.y + safe.height / 8;
-  const int subtitleY = titleY + renderer.getLineHeight(UI_12_FONT_ID) + metrics.verticalSpacing;
-  const int listTop = subtitleY + renderer.getLineHeight(UI_10_FONT_ID) + metrics.verticalSpacing * 2;
+  const int subtitleY = titleY + renderer.getLineHeight(themedFontId(UI_12_FONT_ID)) + metrics.verticalSpacing;
+  const int listTop = subtitleY + renderer.getLineHeight(themedFontId(UI_10_FONT_ID)) + metrics.verticalSpacing * 2;
   screen.setContentMarginFromScreen(fui::Insets{
       static_cast<int16_t>(listTop), static_cast<int16_t>(renderer.getScreenWidth() - (safe.x + safe.width)),
       static_cast<int16_t>(renderer.getScreenHeight() - (safe.y + safe.height) + metrics.verticalSpacing),
@@ -185,8 +186,8 @@ void EndOfBookOptions::render(GfxRenderer& renderer, const MappedInputManager& i
   if (!menuActive()) {
     // No suggestions: the historical plain end screen. 3/8 of the screen height matches
     // the previous fixed position on the 480x800 panel and scales to other resolutions.
-    renderer.drawCenteredText(UI_12_FONT_ID, renderer.getScreenHeight() * 3 / 8, tr(STR_END_OF_BOOK), true,
-                              EpdFontFamily::BOLD);
+    renderer.drawCenteredText(themedFontId(UI_12_FONT_ID), renderer.getScreenHeight() * 3 / 8, tr(STR_END_OF_BOOK),
+                              true, EpdFontFamily::BOLD);
     return;
   }
 
@@ -197,10 +198,11 @@ void EndOfBookOptions::render(GfxRenderer& renderer, const MappedInputManager& i
   // resolutions scale (review request on #2532).
   const Rect safe = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
   const int titleY = safe.y + safe.height / 8;
-  const int subtitleY = titleY + renderer.getLineHeight(UI_12_FONT_ID) + metrics.verticalSpacing;
+  const int subtitleY = titleY + renderer.getLineHeight(themedFontId(UI_12_FONT_ID)) + metrics.verticalSpacing;
 
-  UITheme::drawCenteredText(renderer, safe, UI_12_FONT_ID, titleY, tr(STR_END_OF_BOOK), true, EpdFontFamily::BOLD);
-  UITheme::drawCenteredText(renderer, safe, UI_10_FONT_ID, subtitleY, tr(STR_EOB_CONTINUE_WITH));
+  UITheme::drawCenteredText(renderer, safe, themedFontId(UI_12_FONT_ID), titleY, tr(STR_END_OF_BOOK), true,
+                            EpdFontFamily::BOLD);
+  UITheme::drawCenteredText(renderer, safe, themedFontId(UI_10_FONT_ID), subtitleY, tr(STR_EOB_CONTINUE_WITH));
 
   // The list renders through the FreeInkApp so its rows register touch hit
   // rects; renderUi re-derives the device context, picking up any rotation

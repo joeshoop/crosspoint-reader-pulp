@@ -374,11 +374,12 @@ void ReaderToolbarUi::buildMenuSheet(UiScreen& screen) {
                                                     metrics.verticalSpacing + metrics.buttonHintsHeight));
   // sheet() returns the content band; the sheet's edge sits grabberInset above it.
   menuSheetTop_ = sheetRect.y - sheetProps.grabberInset;
+  lastMenuSheetTop_ = menuSheetTop_;
   if (!metrics.sheetPencilRule) {
     const fui::Rect full = screen.frame().device().screen();
-    screen.target().fill(fui::Rect{full.x, static_cast<int16_t>(menuSheetTop_ - kSheetShadow), full.width,
-                                   kSheetShadow},
-                         fui::Paint::dither(fui::Color::LightGray));
+    screen.target().fill(
+        fui::Rect{full.x, static_cast<int16_t>(menuSheetTop_ - kSheetShadow), full.width, kSheetShadow},
+        fui::Paint::dither(fui::Color::LightGray));
   }
 
   if (model_.sheetTitle) {

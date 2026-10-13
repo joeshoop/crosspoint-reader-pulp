@@ -9,6 +9,7 @@
 
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
+#include "components/UIScale.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -118,8 +119,7 @@ void StatusBarSettingsActivity::activateIndex(const int index) {
 
 // Opens the picker, or steps to the next value in place when the theme
 // avoids pickers. value is a SETTINGS field, so it outlives the popup.
-void StatusBarSettingsActivity::chooseValue(const StrId title, const StrId* names, const int count,
-                                            uint8_t& value) {
+void StatusBarSettingsActivity::chooseValue(const StrId title, const StrId* names, const int count, uint8_t& value) {
   if (UITheme::getInstance().getMetrics().settingsCycleValues) {
     value = static_cast<uint8_t>((value + 1) % count);
     SETTINGS.saveToFile();
@@ -245,7 +245,7 @@ void StatusBarSettingsActivity::render(RenderLock&&) {
   // Anchor the preview as a footer directly above the button hints.
   GUI.drawStatusBar(renderer, 75, 8, 32, title, metrics.buttonHintsHeight, 0, false);
 
-  renderer.drawCenteredText(UI_10_FONT_ID,
+  renderer.drawCenteredText(themedFontId(UI_10_FONT_ID),
                             renderer.getScreenHeight() - UITheme::getInstance().getStatusBarHeight() -
                                 metrics.buttonHintsHeight - verticalPreviewTextPadding,
                             tr(STR_PREVIEW));

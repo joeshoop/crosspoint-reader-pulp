@@ -32,3 +32,9 @@ inline UIScaleSpec uiScaleSpec() {
   spec.titleFontId = UI_12_FONT_ID;
   return spec;
 }
+
+// Fixed UI font ids drawn directly (status screens, captions): book-styled
+// themes set them in the reader font too; other themes keep the id as given.
+inline int themedFontId(const int fontId) {
+  return UITheme::getInstance().getMetrics().uiUsesReaderFont ? SETTINGS.getReaderFontId() : fontId;
+}

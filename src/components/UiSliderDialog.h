@@ -35,6 +35,9 @@ struct UiSliderDialogSpec {
   // Step hints for button boards (small step, large step); skipped on touch.
   const char* hintLine1 = nullptr;
   const char* hintLine2 = nullptr;
+  // As a sheet: reach at least up to this y (-1: just fit), so a sheet it
+  // opens over is covered, not peeking out above it.
+  int sheetTop = -1;
 };
 
 inline void buildSliderDialogScreen(UiAppHost::UiScreen& screen, freeink::ui::GfxRendererTarget& uiTarget,
@@ -44,8 +47,8 @@ inline void buildSliderDialogScreen(UiAppHost::UiScreen& screen, freeink::ui::Gf
   const auto& theme = screen.theme();
 
   // The readout is the dialog's hero: remap the title slot to the large sans
-  // so it reads at a glance.
-  uiTarget.setFont(fui::GfxRendererTarget::FONT_TITLE, NOTOSANS_18_FONT_ID);
+  // so it reads at a glance. Book-styled themes keep their reader font there.
+  if (!metrics.uiUsesReaderFont) uiTarget.setFont(fui::GfxRendererTarget::FONT_TITLE, NOTOSANS_18_FONT_ID);
 
   const bool touch = mappedInput.hasTouch();
   // Touch boards get the finger-sized pill (same as the frontlight rows); on
@@ -54,7 +57,8 @@ inline void buildSliderDialogScreen(UiAppHost::UiScreen& screen, freeink::ui::Gf
   const int16_t bandHeight = touch ? 56 : 24;
   const int16_t capLh = screen.target().lineHeight(theme.smallText.font);
   const int16_t sliderH = static_cast<int16_t>(capLh + theme.spaceMd + bandHeight);
-  const int16_t hintsH = touch ? 0 : static_cast<int16_t>(capLh * 2 + theme.spaceSm + theme.spaceMd);
+  const bool hints = !touch && (spec.hintLine1 || spec.hintLine2);
+  const int16_t hintsH = hints ? static_cast<int16_t>(capLh * 2 + theme.spaceSm + theme.spaceMd) : 0;
 
   // Dialog chrome and slots, styled exactly like OptionPopup: bordered popup
   // panel per theme frame metrics, body-font caption, [-] [+] [Confirm] as
@@ -93,6 +97,12 @@ inline void buildSliderDialogScreen(UiAppHost::UiScreen& screen, freeink::ui::Gf
   props.styles.normal.border = fui::Paint::solid(fui::Color::Black);
   props.styles.normal.borderWidth = static_cast<uint8_t>(metrics.popupFrameThickness);
   props.styles.normal.radius = static_cast<uint8_t>(metrics.popupCornerRadius);
+  const bool asSheet = metrics.sliderDialogSheet;
+  if (metrics.popupPencilFrame || asSheet) {
+    // Outlined in pencil below, after the panel is drawn, or edged by the sheet.
+    props.styles.normal.borderWidth = 0;
+    props.styles.normal.radius = 0;
+  }
   props.styles.selected = props.styles.normal;
   props.styles.focused = props.styles.normal;
   props.styles.active = props.styles.normal;
@@ -108,21 +118,55 @@ inline void buildSliderDialogScreen(UiAppHost::UiScreen& screen, freeink::ui::Gf
   // optionDialog returns its rect. Same width rule as OptionPopup.
   props.contentHeight = static_cast<int16_t>(sliderH + hintsH);
   const fui::Rect screenRect = screen.frame().screen();
-  const int16_t width = fui::clampI16(
-      std::min<int>(screenRect.width * 3 / 4, screenRect.width - metrics.optionPopupDialogSideMargin * 2));
+  const int16_t width = asSheet
+                            ? screenRect.width
+                            : fui::clampI16(std::min<int>(screenRect.width * 3 / 4,
+                                                          screenRect.width - metrics.optionPopupDialogSideMargin * 2));
   // Measured height minus one spaceMd: texts anchor to the top and the band/
   // buttons to the bottom, so the trim comes out of the air between the
   // readout and the slider band (which already carries its endpoints line).
   const int16_t height =
       fui::clampI16(fui::optionDialogHeight(screen.target(), props, width) - theme.spaceMd, 0, screenRect.height);
-  const fui::Rect dialog = fui::centeredRect(screenRect, fui::Size{width, height});
+  fui::Rect dialog = fui::centeredRect(screenRect, fui::Size{width, height});
+  if (asSheet) {
+    // A sheet over the bottom of the page, as the reader menu opens: the dialog
+    // sits on it above the button hints, under the sheet's top edge.
+    const int16_t edge = static_cast<int16_t>(metrics.verticalSpacing);
+    const int16_t hintsRow = static_cast<int16_t>(metrics.verticalSpacing + metrics.buttonHintsHeight);
+    const fui::Rect safe = screen.frame().safeRect();
+    int sheetH = edge + height + hintsRow;
+    if (spec.sheetTop >= 0) sheetH = std::max(sheetH, safe.bottom() - spec.sheetTop);
+    fui::SheetProps sheetProps;
+    sheetProps.anchor = fui::SheetEdge::Bottom;
+    sheetProps.grabberHeight = 0;
+    sheetProps.grabberMargin = 0;
+    sheetProps.grabberInset = edge;
+    sheetProps.ruleWidth = metrics.sheetPencilRule ? 2 : 1;
+    screen.sheet(sheetProps, static_cast<int16_t>(sheetH));
+    // Centered in the room between the sheet's edge and the hints.
+    const int roomTop = safe.bottom() - sheetH + edge;
+    const int room = sheetH - edge - hintsRow;
+    dialog = fui::Rect{screenRect.x, static_cast<int16_t>(roomTop + (room - height) / 2), width, height};
+  }
   // Chrome guard first, controls after: routing scans newest-first, so the
   // buttons and slider win inside the dialog and the guard absorbs the rest —
   // same pattern as OptionPopup.
   screen.frame().hit(dialog, spec.chromeAction, 0, fui::InputTouch);
   const fui::Rect band = fui::optionDialog(screen.frame(), dialog, props);
+  if (metrics.popupPencilFrame && !asSheet) {
+    constexpr int16_t kLine = 2;
+    auto& target = screen.target();
+    const auto dot = [&target](const int x, const int y) {
+      target.fill(fui::Rect{static_cast<int16_t>(x), static_cast<int16_t>(y), 1, 1},
+                  fui::Paint::solid(fui::Color::Black));
+    };
+    fui::pencilStroke(fui::Rect{dialog.x, dialog.y, dialog.width, kLine}, 0, dot);
+    fui::pencilStroke(fui::Rect{dialog.x, static_cast<int16_t>(dialog.bottom() - kLine), dialog.width, kLine}, 0, dot);
+    fui::pencilStroke(fui::Rect{dialog.x, dialog.y, kLine, dialog.height}, 0, dot);
+    fui::pencilStroke(fui::Rect{static_cast<int16_t>(dialog.right() - kLine), dialog.y, kLine, dialog.height}, 0, dot);
+  }
 
-  if (!touch) {
+  if (hints) {
     // Two-line step hint (front buttons = fine step, side buttons = coarse
     // step) under the slider, preformatted by the caller so the layout
     // doesn't depend on a separator hidden in translated text.
@@ -147,12 +191,35 @@ inline void buildSliderDialogScreen(UiAppHost::UiScreen& screen, freeink::ui::Gf
     screen.target().text(caption, spec.maxLabel, endpoint);
   }
 
+  const fui::Rect sliderRect{band.x, static_cast<int16_t>(band.y + capLh + theme.spaceMd), band.width, bandHeight};
+  if (metrics.popupPencilFrame) {
+    // Pencil-styled themes: a light pencil line with the position as a black
+    // dot, instead of a capsule filling up. Same touch/drag target.
+    if (spec.sliderAction != 0) {
+      screen.frame().hit(sliderRect, spec.sliderAction, 0, fui::InputTouch | fui::InputDrag);
+    }
+    auto& target = screen.target();
+    const auto dot = [&target](const int x, const int y) {
+      target.fill(fui::Rect{static_cast<int16_t>(x), static_cast<int16_t>(y), 1, 1},
+                  fui::Paint::solid(fui::Color::Black));
+    };
+    const int16_t radius = static_cast<int16_t>(std::min<int>(bandHeight / 2, 9));
+    const int16_t centerY = static_cast<int16_t>(sliderRect.y + sliderRect.height / 2);
+    fui::pencilStroke(fui::Rect{sliderRect.x, static_cast<int16_t>(centerY - 1), sliderRect.width, 2}, 0, dot, true,
+                      40);
+    const int max = spec.max <= 0 ? 1 : spec.max;
+    const int value = std::clamp(spec.value, 0, max);
+    const int travel = sliderRect.width - 2 * radius;
+    const int16_t centerX = static_cast<int16_t>(sliderRect.x + radius + travel * value / max);
+    target.fill(fui::Rect{static_cast<int16_t>(centerX - radius), static_cast<int16_t>(centerY - radius),
+                          static_cast<int16_t>(2 * radius), static_cast<int16_t>(2 * radius)},
+                fui::Paint::solid(fui::Color::Black), static_cast<uint8_t>(radius));
+    return;
+  }
   fui::CapsuleSliderProps capsule;
   capsule.value = spec.value;
   capsule.max = spec.max;
   capsule.action = spec.sliderAction;
   capsule.radius = theme.capsuleRadius;
-  fui::capsuleSlider(screen.frame(),
-                     fui::Rect{band.x, static_cast<int16_t>(band.y + capLh + theme.spaceMd), band.width, bandHeight},
-                     capsule);
+  fui::capsuleSlider(screen.frame(), sliderRect, capsule);
 }

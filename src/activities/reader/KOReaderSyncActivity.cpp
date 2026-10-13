@@ -22,6 +22,7 @@
 #include "activities/ActivityManager.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "clippings/ClippingSync.h"
+#include "components/UIScale.h"
 #include "components/UITheme.h"
 #include "components/UiAppHelpers.h"  // list icons for the compare rows
 #include "fontIds.h"
@@ -647,10 +648,10 @@ void KOReaderSyncActivity::render(RenderLock&&) {
 
   int top = screen.y + screen.height / 2 - 40;
   if (state == NO_CREDENTIALS) {
-    UITheme::drawCenteredText(renderer, screen, UI_10_FONT_ID, top, tr(STR_NO_CREDENTIALS_MSG), true,
+    UITheme::drawCenteredText(renderer, screen, themedFontId(UI_10_FONT_ID), top, tr(STR_NO_CREDENTIALS_MSG), true,
                               EpdFontFamily::BOLD);
-    UITheme::drawCenteredText(renderer, screen, UI_10_FONT_ID, top + 40, tr(STR_KOREADER_SETUP_HINT), true,
-                              EpdFontFamily::BOLD);
+    UITheme::drawCenteredText(renderer, screen, themedFontId(UI_10_FONT_ID), top + 40, tr(STR_KOREADER_SETUP_HINT),
+                              true, EpdFontFamily::BOLD);
 
     const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
@@ -659,7 +660,8 @@ void KOReaderSyncActivity::render(RenderLock&&) {
   }
 
   if (state == SYNCING || state == UPLOADING) {
-    UITheme::drawCenteredText(renderer, screen, UI_10_FONT_ID, top, statusMessage.c_str(), true, EpdFontFamily::BOLD);
+    UITheme::drawCenteredText(renderer, screen, themedFontId(UI_10_FONT_ID), top, statusMessage.c_str(), true,
+                              EpdFontFamily::BOLD);
     renderer.displayBuffer();
     return;
   }
@@ -686,7 +688,7 @@ void KOReaderSyncActivity::render(RenderLock&&) {
   }
 
   if (state == UPLOAD_COMPLETE || state == SYNC_COMPLETE) {
-    UITheme::drawCenteredText(renderer, screen, UI_10_FONT_ID, top,
+    UITheme::drawCenteredText(renderer, screen, themedFontId(UI_10_FONT_ID), top,
                               state == UPLOAD_COMPLETE ? tr(STR_UPLOAD_SUCCESS) : tr(STR_ALREADY_SYNCED), true,
                               EpdFontFamily::BOLD);
 
@@ -697,8 +699,9 @@ void KOReaderSyncActivity::render(RenderLock&&) {
   }
 
   if (state == SYNC_FAILED) {
-    UITheme::drawCenteredText(renderer, screen, UI_10_FONT_ID, top, tr(STR_SYNC_FAILED_MSG), true, EpdFontFamily::BOLD);
-    UITheme::drawCenteredText(renderer, screen, UI_10_FONT_ID, top + 40, statusMessage.c_str());
+    UITheme::drawCenteredText(renderer, screen, themedFontId(UI_10_FONT_ID), top, tr(STR_SYNC_FAILED_MSG), true,
+                              EpdFontFamily::BOLD);
+    UITheme::drawCenteredText(renderer, screen, themedFontId(UI_10_FONT_ID), top + 40, statusMessage.c_str());
 
     const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);

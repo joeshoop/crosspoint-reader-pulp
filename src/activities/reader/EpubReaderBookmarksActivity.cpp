@@ -10,6 +10,7 @@
 #include "../../util/BookmarkFile.h"
 #include "MappedInputManager.h"
 #include "activities/util/KeyboardEntryActivity.h"
+#include "components/UIScale.h"
 #include "components/UITheme.h"
 #include "components/UiAppHelpers.h"
 #include "fontIds.h"
@@ -256,7 +257,7 @@ void EpubReaderBookmarksActivity::buildScreen(UiScreen& screen) {
 
   // This hint names a physical button, so omit it on touch boards.
   if (!mappedInput.hasTouch()) {
-    const int helpLineHeight = renderer.getLineHeight(SMALL_FONT_ID);
+    const int helpLineHeight = renderer.getLineHeight(themedFontId(SMALL_FONT_ID));
     const fui::Rect band = screen.takeBottom(static_cast<int16_t>(helpLineHeight + metrics.verticalSpacing));
     GUI.drawHelpText(renderer, Rect{band.x, band.y + metrics.verticalSpacing, band.width, helpLineHeight},
                      tr(STR_HOLD_OPEN_FOR_ACTIONS));
@@ -292,8 +293,9 @@ void EpubReaderBookmarksActivity::render(RenderLock&&) {
 
   // Manual centering to honor content gutters.
   const int titleX =
-      contentX + (contentWidth - renderer.getTextWidth(UI_12_FONT_ID, tr(STR_BOOKMARKS), EpdFontFamily::BOLD)) / 2;
-  renderer.drawText(UI_12_FONT_ID, titleX, 15 + contentY, tr(STR_BOOKMARKS), true, EpdFontFamily::BOLD);
+      contentX +
+      (contentWidth - renderer.getTextWidth(themedFontId(UI_12_FONT_ID), tr(STR_BOOKMARKS), EpdFontFamily::BOLD)) / 2;
+  renderer.drawText(themedFontId(UI_12_FONT_ID), titleX, 15 + contentY, tr(STR_BOOKMARKS), true, EpdFontFamily::BOLD);
 
   renderUi();
 

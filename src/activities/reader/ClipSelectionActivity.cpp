@@ -434,7 +434,11 @@ void ClipSelectionActivity::loop() {
   if (wordCount == 0) return;
   // The side-button action that opened this screen closes it again.
   const HomeButtonAction home = mappedInput.homeButtonAction();
-  if ((mode == Mode::Clip && home == HomeButtonAction::CreateClipping) ||
+  // So does a short power press set to create clippings, as the hint says.
+  const bool powerClip = SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::CREATE_CLIPPING &&
+                         mappedInput.wasReleased(MappedInputManager::Button::Power) &&
+                         !mappedInput.wasReleased(MappedInputManager::Button::Down);
+  if ((mode == Mode::Clip && (home == HomeButtonAction::CreateClipping || powerClip)) ||
       (mode == Mode::Lookup && home == HomeButtonAction::Dictionary)) {
     cancel();
     return;
@@ -652,12 +656,11 @@ Rect ClipSelectionActivity::actionRect() const {
   safe.width = rightEdge - safe.x;
   safe.height = bottomEdge - safe.y;
   const int font = uiScaleSpec().smallFontId;
-  int labelWidth =
-      std::max({renderer.getTextWidth(font, tr(STR_LOOKUP)), renderer.getTextWidth(font, tr(STR_CLIP)),
-                renderer.getTextWidth(font, tr(STR_BOOKMARK_OPTION))});
+  int labelWidth = std::max({renderer.getTextWidth(font, tr(STR_LOOKUP)), renderer.getTextWidth(font, tr(STR_CLIP)),
+                             renderer.getTextWidth(font, tr(STR_BOOKMARK_OPTION))});
   if (editing >= 0) {
-    labelWidth = std::max({labelWidth, renderer.getTextWidth(font, tr(STR_DONE)),
-                           renderer.getTextWidth(font, tr(STR_DELETE))});
+    labelWidth =
+        std::max({labelWidth, renderer.getTextWidth(font, tr(STR_DONE)), renderer.getTextWidth(font, tr(STR_DELETE))});
   }
   const int count = actionCount();
   const int padding = metrics.menuSpacing;
@@ -864,8 +867,8 @@ void ClipSelectionActivity::markSavedClippings() {
     const auto page = static_cast<uint16_t>(saved.firstPage + word.pageOffset);
     for (size_t c = 0; c < CLIPPINGS.clippingCount() && word.clipping < 0; ++c) {
       if (static_cast<int>(c) == editing) continue;
-      if (clippingContainsWord(*CLIPPINGS.clippingAt(c), saved.spineIndex, page, saved.pageCount,
-                               saved.layoutSignature, word.pageWordIndex, word.startOffset, word.endOffset)) {
+      if (clippingContainsWord(*CLIPPINGS.clippingAt(c), saved.spineIndex, page, saved.pageCount, saved.layoutSignature,
+                               word.pageWordIndex, word.startOffset, word.endOffset)) {
         word.clipping = static_cast<int16_t>(c);
       }
     }
@@ -888,9 +891,9 @@ bool ClipSelectionActivity::beginEdit(const int index) {
   // A clipping that runs past these pages would be cut short on save.
   const bool hasOffsets = clipping->startOffset != UINT32_MAX && words[first].startOffset != UINT32_MAX &&
                           words[last].endOffset != UINT32_MAX;
-  const bool whole = hasOffsets ? words[first].startOffset <= clipping->startOffset &&
-                                      words[last].endOffset >= clipping->endOffset
-                                : last - first + 1 == clipping->wordCount;
+  const bool whole =
+      hasOffsets ? words[first].startOffset <= clipping->startOffset && words[last].endOffset >= clipping->endOffset
+                 : last - first + 1 == clipping->wordCount;
   if (!whole) return false;
 
   editing = index;
@@ -973,7 +976,7 @@ void ClipSelectionActivity::fillSelected(const int x, const int y, const int wid
 }
 
 Rect ClipSelectionActivity::cursorRect(const int index, const int offsetX, const int offset) const {
-  constexpr int kMargin = 5;   // the frame plus a little air: it sits clear of the glyphs
+  constexpr int kMargin = 5;  // the frame plus a little air: it sits clear of the glyphs
   // The line above isn't redrawn when the frame is erased: above the word the
   // frame stays out of that line's underline.
   constexpr int kAbove = 3;

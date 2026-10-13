@@ -32,10 +32,12 @@ constexpr ThemeMetrics values = {.batteryWidth = 15,
                                  .listScrollInset = 4,
                                  .listScrollMargin = 3,
                                  .sheetPencilRule = true,
+                                 .popupPencilFrame = true,
                                  .uiUsesReaderFont = true,
                                  .settingsSingleList = true,
                                  .settingsCycleValues = true,
                                  .readerMenuSheet = true,
+                                 .sliderDialogSheet = true,
                                  .statusBarBookStyle = true,
                                  .statusBarTextAtTop = true,
                                  .progressRibbon = true,
@@ -112,12 +114,15 @@ class PulpTheme : public BaseTheme {
   Rect drawPopup(const GfxRenderer& renderer, const char* message) const override;
   int homeCoverTileHeight(const GfxRenderer& renderer) const override;
   int homeCoverThumbHeight(const GfxRenderer& renderer) const override;
+  int shelfCoverHeight(const GfxRenderer& renderer) const override;
+  int shelfCellHeight(const GfxRenderer& renderer) const override;
+  void drawShelfBook(GfxRenderer& renderer, Rect cell, const RecentBook& book, int coverHeight,
+                     bool selected) const override;
   bool drawTextHighlightBand(const GfxRenderer& renderer, int x, int lineTop, int width, int lineHeight,
                              bool muted) const override;
   bool drawTextHighlighter(const GfxRenderer& renderer, int textX, int lineTop, int textWidth, int lineHeight,
                            uint32_t seed, bool muted) const override;
-  bool drawTextCursor(const GfxRenderer& renderer, int x, int y, int width, int height,
-                      bool anchored) const override;
+  bool drawTextCursor(const GfxRenderer& renderer, int x, int y, int width, int height, bool anchored) const override;
   void drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                       const std::function<std::string(int index)>& buttonLabel,
                       const std::function<UIIcon(int index)>& rowIcon) const override;

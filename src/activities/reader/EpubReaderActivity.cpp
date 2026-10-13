@@ -52,8 +52,9 @@
 #include "activities/settings/TextSettingsActivity.h"
 #include "clippings/ClippingText.h"
 #include "clippings/ClippingsManager.h"
-#include "components/icons/bookmark.h"
+#include "components/UIScale.h"
 #include "components/UITheme.h"
+#include "components/icons/bookmark.h"
 #include "fontIds.h"
 #include "util/BookmarkUtil.h"
 #include "util/ButtonNavigator.h"
@@ -331,7 +332,8 @@ void EpubReaderActivity::openReaderMenu() {
   openListMenu();
 }
 
-void EpubReaderActivity::openListMenu() {  // Child screens (chapter list, text settings) release the section to free its
+void EpubReaderActivity::openListMenu() {  // Child screens (chapter list, text settings) release the section to free
+                                           // its
   // pagination buffers; chapterPosition() covers that with the cached position.
   const ChapterPosition position = chapterPosition();
   const int bookProgressPercent = bookPercentFor(position);
@@ -422,8 +424,8 @@ void EpubReaderActivity::startClipSelection(const int initialX, const int initia
   std::string bookTitle = epub->getTitle();
   std::string author = epub->getAuthor();
 
-  ClipSelectionActivity::SavedClippings saved{spineIndex, static_cast<uint16_t>(pageNumber), pageCount,
-                                              layoutSignature, nullptr};
+  ClipSelectionActivity::SavedClippings saved{spineIndex, static_cast<uint16_t>(pageNumber), pageCount, layoutSignature,
+                                              nullptr};
   // A top running head stays put; a bottom status bar would sit under the hints.
   if (UITheme::getStatusBarTopHeight(renderer) > 0) saved.drawRunningHead = [this] { renderStatusBar(); };
   auto activity = makeUniqueNoThrow<ClipSelectionActivity>(renderer, mappedInput, std::move(pages), marginLeft,
@@ -468,11 +470,9 @@ void EpubReaderActivity::startClipSelection(const int initialX, const int initia
       }
       int top, right, bottom, left;
       renderer.getOrientedViewableTRBL(&top, &right, &bottom, &left);
-      auto lookup = makeUniqueNoThrow<DictionaryWordSelectActivity>(renderer, mappedInput, std::move(page),
-                                                                    left + SETTINGS.screenMargin,
-                                                                    top + SETTINGS.screenMargin +
-                                                                        UITheme::getStatusBarTopHeight(renderer),
-                                                                    clipping.text);
+      auto lookup = makeUniqueNoThrow<DictionaryWordSelectActivity>(
+          renderer, mappedInput, std::move(page), left + SETTINGS.screenMargin,
+          top + SETTINGS.screenMargin + UITheme::getStatusBarTopHeight(renderer), clipping.text);
       if (!lookup) {
         LOG_ERR("CLIP", "OOM: dictionary lookup activity");
         requestUpdate();
@@ -1725,7 +1725,7 @@ void EpubReaderActivity::renderBook() {
 
   if (section->pageCount == 0) {
     LOG_DBG("ERS", "No pages to render");
-    renderer.drawCenteredText(UI_12_FONT_ID, 300, tr(STR_EMPTY_CHAPTER), true, EpdFontFamily::BOLD);
+    renderer.drawCenteredText(themedFontId(UI_12_FONT_ID), 300, tr(STR_EMPTY_CHAPTER), true, EpdFontFamily::BOLD);
     renderStatusBar();
     renderer.displayBuffer();
     pageBufferStale = false;
@@ -1736,7 +1736,7 @@ void EpubReaderActivity::renderBook() {
 
   if (section->currentPage < 0 || section->currentPage >= section->pageCount) {
     LOG_DBG("ERS", "Page out of bounds: %d (max %d)", section->currentPage, section->pageCount);
-    renderer.drawCenteredText(UI_12_FONT_ID, 300, tr(STR_OUT_OF_BOUNDS), true, EpdFontFamily::BOLD);
+    renderer.drawCenteredText(themedFontId(UI_12_FONT_ID), 300, tr(STR_OUT_OF_BOUNDS), true, EpdFontFamily::BOLD);
     renderStatusBar();
     renderer.displayBuffer();
     automaticPageTurnActive = false;
@@ -1759,7 +1759,7 @@ void EpubReaderActivity::renderBook() {
         LOG_ERR("ERS", "Page load retry limit reached, aborting");
         pageLoadRetryCount = 0;
         renderer.clearScreen();
-        renderer.drawCenteredText(UI_12_FONT_ID, 300, tr(STR_PAGE_LOAD_ERROR), true, EpdFontFamily::BOLD);
+        renderer.drawCenteredText(themedFontId(UI_12_FONT_ID), 300, tr(STR_PAGE_LOAD_ERROR), true, EpdFontFamily::BOLD);
         renderer.displayBuffer();
         showPendingSyncSaveError();
         return;
@@ -2199,7 +2199,7 @@ void EpubReaderActivity::drawClippingHighlights(const Page& page, const int font
     if (spanRight < spanLeft) return;
     const int lineTop = spanTop;
     if (!usePen || !GUI.drawTextHighlighter(renderer, spanLeft, lineTop, spanRight - spanLeft, lineHeight,
-                                             static_cast<uint32_t>(spanLeft * 7919 + lineTop * 104729))) {
+                                            static_cast<uint32_t>(spanLeft * 7919 + lineTop * 104729))) {
       fillHighlight(spanLeft, lineTop, spanRight - spanLeft, lineHeight);
     }
     spanRight = spanLeft - 1;
@@ -2634,11 +2634,17 @@ void EpubReaderActivity::renderOverlay() {
     };
   }
   toolbarUi->setModel(model);
+  // The sheet's edge hints replace the progress ribbon; the stored page keeps it for close.
+  if (model.menuSheet && UITheme::getInstance().getMetrics().progressRibbon) {
+    BaseTheme::clearReaderProgressRibbon(renderer);
+  }
   toolbarUi->render();
   if (model.menuSheet) {
     // The sheet leaves a band at its foot for these (ReaderToolbarUi::buildMenuSheet).
     const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    GUI.drawSideButtonHints(renderer, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+    GUI.drawPowerButtonHint(renderer, tr(STR_SLEEP_HOLD));
   }
 }
 

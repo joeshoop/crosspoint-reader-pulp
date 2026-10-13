@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <cstdio>
 
+#include "CrossPointSettings.h"
+#include "ReaderToolbarUi.h"
 #include "components/UITheme.h"
 #include "components/UiSliderDialog.h"
 #include "fontIds.h"
@@ -21,6 +23,14 @@ constexpr fui::ActionId ACTION_CHROME = 5;  // absorbs taps on the dialog body; 
 // Fine/coarse step sizes for percent adjustments (buttons and -/+ tap zones).
 constexpr int kSmallStep = 1;
 constexpr int kLargeStep = 10;
+
+// The side buttons step as they turn pages: the one that turns back steps
+// back. Up turns back unless the side layout or the orientation flips it
+// (layouts with both buttons alike keep Up as back).
+int upStep(const MappedInputManager& mappedInput) {
+  const bool nextPrev = SETTINGS.sideButtonLayout == CrossPointSettings::NEXT_PREV;
+  return nextPrev == mappedInput.isNavDirectionSwapped() ? -kLargeStep : kLargeStep;
+}
 }  // namespace
 
 EpubReaderPercentSelectionActivity::EpubReaderPercentSelectionActivity(GfxRenderer& renderer,
@@ -45,6 +55,7 @@ void EpubReaderPercentSelectionActivity::adjustPercent(const int delta) {
   // Wrap using a 100-value ring (0% and 100% are the same wrap point), but keep 100 as the
   // natural landing value when reached without crossing the boundary (e.g. 90 + 10 = 100).
   const int raw = percent + delta;
+  moved = true;
   if (raw > 0 && raw % 100 == 0) {
     percent = 100;
   } else {
@@ -57,6 +68,7 @@ void EpubReaderPercentSelectionActivity::setPercent(const int value) {
   const int clamped = std::clamp(value, 0, 100);
   if (clamped == percent) return;
   percent = clamped;
+  moved = true;
   requestUpdate();
 }
 
@@ -137,11 +149,8 @@ void EpubReaderPercentSelectionActivity::loop() {
   buttonNavigator.onPressAndContinuous({MappedInputManager::Button::Left}, [this] { adjustPercent(-kSmallStep); });
   buttonNavigator.onPressAndContinuous({MappedInputManager::Button::Right}, [this] { adjustPercent(kSmallStep); });
 
-  // On edge-button boards (X3, X4 Pro) the side buttons sit on the left/right edges of the screen rather
-  // than as a vertical up/down rocker (X4), so BTN_UP is physically the left button and BTN_DOWN the right
-  // one. Flip the large-step direction there so the left button decreases and the right button increases.
-  const int upDelta = gpio.hasEdgeSideButtons() ? -kLargeStep : kLargeStep;
-  const int downDelta = gpio.hasEdgeSideButtons() ? kLargeStep : -kLargeStep;
+  const int upDelta = upStep(mappedInput);
+  const int downDelta = -upDelta;
   buttonNavigator.onPressAndContinuous({MappedInputManager::Button::Up}, [this, upDelta] { adjustPercent(upDelta); });
   buttonNavigator.onPressAndContinuous({MappedInputManager::Button::Down},
                                        [this, downDelta] { adjustPercent(downDelta); });
@@ -152,15 +161,20 @@ void EpubReaderPercentSelectionActivity::percentScreen(UiScreen& screen, void* u
 }
 
 void EpubReaderPercentSelectionActivity::buildPercentScreen(UiScreen& screen) {
-  char readout[16];
-  snprintf(readout, sizeof(readout), "%d%%", percent);
+  // One line, "Go to 67%": the value is the title. Until the value first
+  // moves it reads "Currently at 61%" instead.
+  char readout[48];
+  snprintf(readout, sizeof(readout), !moved ? tr(STR_CURRENTLY_AT_PERCENT_VALUE) : tr(STR_GO_TO_PERCENT_VALUE),
+           percent);
+  // Where the side buttons carry their own labels, the button hints say it all.
+  const bool sideHints = UITheme::getInstance().getMetrics().homeSideButtonHints;
   char hint1[64];
   snprintf(hint1, sizeof(hint1), "%s %d%%", I18N.get(StrId::STR_STEP_HINT_FRONT), kSmallStep);
   char hint2[64];
   snprintf(hint2, sizeof(hint2), "%s %d%%", I18N.get(StrId::STR_STEP_HINT_SIDE), kLargeStep);
 
   UiSliderDialogSpec spec;
-  spec.title = tr(STR_GO_TO_PERCENT);
+  spec.title = nullptr;
   spec.readout = readout;
   spec.value = percent;
   spec.max = 100;
@@ -170,8 +184,10 @@ void EpubReaderPercentSelectionActivity::buildPercentScreen(UiScreen& screen) {
   spec.stepAction = ACTION_STEP;
   spec.okAction = ACTION_OK;
   spec.chromeAction = ACTION_CHROME;
-  spec.hintLine1 = hint1;
-  spec.hintLine2 = hint2;
+  spec.hintLine1 = sideHints ? nullptr : hint1;
+  spec.hintLine2 = sideHints ? nullptr : hint2;
+  // Opened from the reader menu sheet: cover it.
+  spec.sheetTop = ReaderToolbarUi::lastMenuSheetTop();
   buildSliderDialogScreen(screen, uiTarget, mappedInput, spec);
 }
 
@@ -182,8 +198,21 @@ void EpubReaderPercentSelectionActivity::render(RenderLock&&) {
   renderUi();
 
   // Button hints follow the current front button layout.
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), "-", "+");
+  char less[8];
+  char more[8];
+  snprintf(less, sizeof(less), "-%d%%", kSmallStep);
+  snprintf(more, sizeof(more), "+%d%%", kSmallStep);
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), less, more);
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  if (UITheme::getInstance().getMetrics().homeSideButtonHints) {
+    // Up and Down step by the large step, the way they turn pages.
+    char up[8];
+    char down[8];
+    const int upDelta = upStep(mappedInput);
+    snprintf(up, sizeof(up), "%+d%%", upDelta);
+    snprintf(down, sizeof(down), "%+d%%", -upDelta);
+    GUI.drawSideButtonHints(renderer, up, down);
+  }
 
   renderer.displayBuffer();
 }

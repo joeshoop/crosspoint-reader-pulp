@@ -33,9 +33,9 @@ class EpubReaderClippingListActivity final : public UiListActivity {
   std::array<std::array<char, clippingPreview::BUFFER_BYTES>, ROW_WINDOW> previews{};
   std::array<size_t, ROW_WINDOW> previewLengths{};
   std::array<freeink::ui::ListItem, ROW_WINDOW> rowItems;
+  std::array<std::string, ROW_WINDOW> chapterCaptions;  // shortened chapter titles (book-style themes)
   int windowStart = -1;
   int windowCount = 0;
   OptionPopup confirmPopup;
   bool confirmingDelete = false;
-  bool initialListRender = true;
 };

@@ -21,6 +21,7 @@ struct WifiNetworkInfo {
   bool isEncrypted;
   bool hasSavedPassword;             // Whether we have saved credentials for this network
   bool isHiddenPlaceholder = false;  // Synthetic "Add hidden network..." list entry
+  bool isRescanEntry = false;        // Synthetic "Scan again" list entry
 };
 
 // WiFi selection states
@@ -125,7 +126,7 @@ class WifiSelectionActivity final : public Activity, private UiAppHost {
 
   void startWifiScan(bool autoScan = false);
   void processWifiScanResults();
-  void appendHiddenNetworkEntry();
+  void appendSyntheticEntries();
   void selectNetwork(int index);
   void promptHiddenSsid();
   void promptPasswordEntry();

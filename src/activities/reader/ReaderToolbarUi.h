@@ -86,6 +86,9 @@ class ReaderToolbarUi : public UiAppHost {
   int menuSheetTopRow() const { return menuSheetTopRow_; }
   // Top edge of the menu sheet in the last render.
   int menuSheetTop() const { return menuSheetTop_; }
+  // Top edge of the last menu sheet any toolbar drew (-1: none yet), so a
+  // sheet opened from it can cover it exactly.
+  static int lastMenuSheetTop() { return lastMenuSheetTop_; }
 
  private:
   static void screenFn(UiScreen& screen, void* user);
@@ -115,4 +118,5 @@ class ReaderToolbarUi : public UiAppHost {
   int menuSheetFirstRowY_ = -1;
   int menuSheetTopRow_ = 0;
   int menuSheetTop_ = -1;
+  static inline int lastMenuSheetTop_ = -1;
 };

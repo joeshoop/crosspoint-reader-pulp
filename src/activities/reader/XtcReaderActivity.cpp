@@ -13,6 +13,7 @@
 #include "ReaderActivity.h"
 #include "ReaderUtils.h"
 #include "XtcReaderChapterSelectionActivity.h"
+#include "components/UIScale.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -157,7 +158,7 @@ void XtcReaderActivity::renderPage() {
   if (!pageBuffer) {
     LOG_ERR("XTR", "Failed to allocate page buffer (%lu bytes)", pageBufferSize);
     renderer.clearScreen();
-    renderer.drawCenteredText(UI_12_FONT_ID, 300, tr(STR_MEMORY_ERROR), true, EpdFontFamily::BOLD);
+    renderer.drawCenteredText(themedFontId(UI_12_FONT_ID), 300, tr(STR_MEMORY_ERROR), true, EpdFontFamily::BOLD);
     renderer.displayBuffer();
     return;
   }
@@ -168,7 +169,7 @@ void XtcReaderActivity::renderPage() {
             bitDepth, xtc::errorToString(xtc->getLastError()));
     free(pageBuffer);
     renderer.clearScreen();
-    renderer.drawCenteredText(UI_12_FONT_ID, 300, tr(STR_PAGE_LOAD_ERROR), true, EpdFontFamily::BOLD);
+    renderer.drawCenteredText(themedFontId(UI_12_FONT_ID), 300, tr(STR_PAGE_LOAD_ERROR), true, EpdFontFamily::BOLD);
     renderer.displayBuffer();
     return;
   }

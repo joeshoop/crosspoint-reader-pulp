@@ -2,6 +2,7 @@
 
 #include <LibraryIndexFile.h>
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -53,7 +54,7 @@ class LibraryListActivity final : public UiTabListActivity {
   void navigateButtons() override;
   // Shelf sections: File Transfer, Recent, On This Device.
   bool rowStartsSection(int row) const override {
-    return row == 0 || (bookShelf() && (row == shelfRows() || row == shelfRows() + pinnedCount()));
+    return row == 0 || (bookShelf() && (row == shelfCoverCount() || row == shelfRows()));
   }
   // The FreeInkUI header owns both the title and search touch target.
   void drawChrome() override {}
@@ -70,8 +71,12 @@ class LibraryListActivity final : public UiTabListActivity {
 
   // Walk the card and write a fresh index. Blocking, with a popup: at ~70 books
   // it is well under a second, and it only runs when the index is missing or the
-  // user asks.
-  bool rebuildIndex();
+  // user asks. `changed` reports whether any book was added, removed, or edited.
+  bool rebuildIndex(bool* changed = nullptr);
+  // The once-per-boot reconcile, run after the first paint; repaints on change.
+  void reconcileAfterPaint();
+  // Makes missing shelf cover thumbs after the first paint; repaints on change.
+  void makeShelfThumbsAfterPaint();
 
   // Input
   void openSelectedBook();
@@ -131,12 +136,31 @@ class LibraryListActivity final : public UiTabListActivity {
   bool tabsFocused() const { return ringPos() == 0; }
 
   // --- Books shelf (themes with libraryBookShelf) -----------------------------
-  // No strip: list row 0 is File Transfer and the books follow, always on the
-  // Recent shelf. shelfRows() is that leading row count (0 or 1).
+  // No strip, always sorted by title. The leading rows are the recent-book
+  // covers (themes with shelfCoverHeight, else none) and File Transfer; the
+  // card's books follow. shelfRows() is that leading row count.
   static bool bookShelf();
-  static int shelfRows() { return bookShelf() ? 1 : 0; }
-  bool onFileTransferRow() const { return bookShelf() && ringPos() == 1; }
+  int shelfRows() const { return bookShelf() ? shelfCoverCount() + 1 : 0; }
+  bool onFileTransferRow() const { return bookShelf() && ringPos() - 1 == shelfCoverCount(); }
+  // The cover at the selection, or -1.
+  int selectedCover() const { return ringPos() - 1 < shelfCoverCount() ? ringPos() - 1 : -1; }
   void buildShelfRows(UiScreen& screen);
+
+  // --- shelf cover grid ------------------------------------------------------
+  // Up to kShelfCovers recent books as covers, then File Transfer and the "On
+  // This Device" heading on the same page; the selection moving on to the
+  // books hands over to the full list.
+  static constexpr int kShelfCovers = 4;
+  int shelfCoverCount() const { return static_cast<int>(shelfBooks.size()); }
+  bool shelfCoverView() const { return shelfCoverCount() > 0 && ringPos() - 1 <= shelfCoverCount(); }
+  // Copies the leading store books, keeping known cover paths.
+  void syncShelfBooks();
+  // Side buttons in the grid move a row (two covers); true when handled.
+  bool stepShelfGridRow();
+  void drawShelfHeading(UiScreen& screen, int16_t rowHeight) const;
+  void buildShelfCovers(UiScreen& screen);
+  void fillShelfWindow(freeink::ui::ListProps& props, int visibleRows);
+  void showBookOptions(const std::string& path, const std::string& title, bool isStoreRow);
 
   // --- pinned recently-opened overlay ---------------------------------------
   // On the unfiltered Recent shelf the RecentBooksStore entries sit on top, in
@@ -195,8 +219,19 @@ class LibraryListActivity final : public UiTabListActivity {
   uint8_t pinnedTotal = 0;
   uint8_t overlapCount = 0;
 
+  // Leading RecentBooksStore entries for the cover grid (at most kShelfCovers),
+  // and their thumb height; 0 when the theme has no grid.
+  std::vector<RecentBook> shelfBooks;
+  int shelfCoverH = 0;
+  // Last row position the cover view shows in full, measured as it draws, and
+  // the viewport it lays its rows out with (apart from the full list's).
+
   bool lockNextConfirmRelease = false;
   bool lockNextBackRelease = false;
+  bool reconcilePending = false;
+  bool thumbsPending = false;
+  // Set by the render task once the list is on screen.
+  std::atomic<bool> painted{false};
 
   // Row options modal (Recent long-press menu); owned here so it outlives the
   // touch event that opened it.

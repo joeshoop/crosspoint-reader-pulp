@@ -76,14 +76,13 @@ class HomeActivity final : public Activity {
 
   int getMenuItemCount() const;
   bool storeCoverBuffer();
-  int coverTileHeight() const;    // Store frame buffer for cover image
-  bool restoreCoverBuffer();  // Restore frame buffer from stored cover
-  void freeCoverBuffer();     // Free the stored cover buffer
+  int coverTileHeight() const;  // Store frame buffer for cover image
+  bool restoreCoverBuffer();    // Restore frame buffer from stored cover
+  void freeCoverBuffer();       // Free the stored cover buffer
   void loadRecentBooks(int maxBooks);
   void loadRecentCovers(int coverHeight);
   void fillCoverGridFromLibrary();
   void resolveGridCoverPaths();
-  void loadGridCover(RecentBook& book, int height, bool& showingLoading, Rect& popupRect);
 
  public:
   explicit HomeActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,

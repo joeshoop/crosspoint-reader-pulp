@@ -24,6 +24,7 @@
 #include "OpdsServerStore.h"
 #include "RecentBooksStore.h"
 #include "activities/plugins/PluginCatalogActivity.h"  // anyPluginInstalled()
+#include "components/CoverThumbs.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -122,46 +123,6 @@ void HomeActivity::resolveGridCoverPaths() {
   }
 }
 
-void HomeActivity::loadGridCover(RecentBook& book, int height, bool& showingLoading, Rect& popupRect) {
-  if (!book.coverBmpPath.empty() && Storage.exists(UITheme::getCoverThumbPath(book.coverBmpPath, height).c_str()))
-    return;
-  // Only one parser lives at a time; EPUB/XTC objects exceed the stack budget.
-  if (FsHelpers::hasReflowableBookExtension(book.path)) {
-    auto epub = makeUniqueNoThrow<Epub>(book.path, "/.crosspoint");
-    if (!epub) {
-      LOG_ERR("HOME", "OOM: cover EPUB");
-      return;
-    }
-    book.coverBmpPath = epub->getThumbBmpPath();
-    if (Storage.exists(epub->getThumbBmpPath(height).c_str())) return;
-    if (!showingLoading) {
-      showingLoading = true;
-      popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
-      GUI.fillPopupProgress(renderer, popupRect, 0);
-    }
-    if (epub->generateThumbBmpFromSource(height)) {
-      return;
-    }
-  } else if (FsHelpers::hasXtcExtension(book.path)) {
-    auto xtc = makeUniqueNoThrow<Xtc>(book.path, "/.crosspoint");
-    if (!xtc) {
-      LOG_ERR("HOME", "OOM: cover XTC");
-      return;
-    }
-    book.coverBmpPath = xtc->getThumbBmpPath();
-    if (Storage.exists(xtc->getThumbBmpPath(height).c_str())) return;
-    if (!showingLoading) {
-      showingLoading = true;
-      popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
-      GUI.fillPopupProgress(renderer, popupRect, 0);
-    }
-    if (xtc->load() && xtc->generateThumbBmp(height)) {
-      return;
-    }
-  }
-  book.coverBmpPath.clear();
-}
-
 void HomeActivity::loadRecentCovers(int coverHeight) {
   recentsLoading = true;
   bool showingLoading = false;
@@ -173,7 +134,7 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
     // would rescale the dithered thumb at draw time and alias badly.
     const int thumbHeight = coverGridUi ? coverGridUi->thumbHeightFor() : coverHeight;
     if (coverGridUi) {
-      loadGridCover(book, thumbHeight, showingLoading, popupRect);
+      ensureCoverThumb(renderer, book, thumbHeight, showingLoading, popupRect);
       ++progress;
       if (showingLoading) GUI.fillPopupProgress(renderer, popupRect, progress * 100 / recentBooks.size());
       continue;
@@ -426,9 +387,9 @@ void HomeActivity::loop() {
   const int recentCount = std::min(static_cast<int>(recentBooks.size()), coverColumnCount);
   const int coverColumnWidth = (content.width - 2 * metrics.contentSidePadding) / coverColumnCount;
   int touchedBook = -1;
-  const auto coverTouch = mappedInput.colTouch(touchedBook, content.x + metrics.contentSidePadding, coverColumnWidth,
-                                               recentCount, metrics.homeTopPadding,
-                                               metrics.homeTopPadding + coverTileHeight(), coverColumnWidth);
+  const auto coverTouch =
+      mappedInput.colTouch(touchedBook, content.x + metrics.contentSidePadding, coverColumnWidth, recentCount,
+                           metrics.homeTopPadding, metrics.homeTopPadding + coverTileHeight(), coverColumnWidth);
   if (coverTouch != MappedInputManager::RowTouch::None) {
     if (coverTouch == MappedInputManager::RowTouch::Down) {
       if (selectorIndex != touchedBook) {
@@ -562,10 +523,15 @@ void HomeActivity::render(RenderLock&&) {
       [&menuItems](int index) { return std::string(menuItems[index]); },
       [&menuIcons](int index) { return menuIcons[index]; });
 
-  const auto labels = mappedInput.mapLabels(recentBooks.empty() ? "" : tr(STR_RESUME), tr(STR_SELECT), tr(STR_DIR_UP),
-                                            tr(STR_DIR_DOWN));
+  // Themes with edge hints call the resume button Back, as on every other screen.
+  const char* resumeLabel = metrics.homeSideButtonHints ? tr(STR_BACK) : tr(STR_RESUME);
+  const auto labels =
+      mappedInput.mapLabels(recentBooks.empty() ? "" : resumeLabel, tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-  if (metrics.homeSideButtonHints) GUI.drawSideButtonHints(renderer, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+  if (metrics.homeSideButtonHints) {
+    GUI.drawSideButtonHints(renderer, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+    GUI.drawPowerButtonHint(renderer, tr(STR_SLEEP_HOLD));
+  }
 
   renderer.displayBuffer(cleanInitialRefresh && !firstRenderDone ? HalDisplay::HALF_REFRESH : HalDisplay::FAST_REFRESH);
 

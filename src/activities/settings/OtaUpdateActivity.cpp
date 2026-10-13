@@ -7,6 +7,7 @@
 #include "MappedInputManager.h"
 #include "SilentRestart.h"
 #include "activities/network/WifiSelectionActivity.h"
+#include "components/UIScale.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "network/OtaUpdater.h"
@@ -107,7 +108,7 @@ void OtaUpdateActivity::render(RenderLock&&) {
   renderer.clearScreen();
 
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_UPDATE));
-  const auto height = renderer.getLineHeight(UI_10_FONT_ID);
+  const auto height = renderer.getLineHeight(themedFontId(UI_10_FONT_ID));
   const auto top = (pageHeight - height) / 2;
 
   float updaterProgress = 0;
@@ -122,19 +123,20 @@ void OtaUpdateActivity::render(RenderLock&&) {
   }
 
   if (state == CHECKING_FOR_UPDATE) {
-    renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_CHECKING_UPDATE));
+    renderer.drawCenteredText(themedFontId(UI_10_FONT_ID), top, tr(STR_CHECKING_UPDATE));
   } else if (state == WAITING_CONFIRMATION) {
     // Version info sits in the upper part of the screen so the centered
     // Cancel/Update popup doesn't cover it (same layout as ConfirmationActivity).
     const int infoTop = pageHeight / 6;
-    renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, infoTop,
+    renderer.drawText(themedFontId(UI_10_FONT_ID), metrics.contentSidePadding, infoTop,
                       (std::string(tr(STR_CURRENT_VERSION)) + CROSSPOINT_VERSION).c_str());
-    renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, infoTop + height + metrics.verticalSpacing,
+    renderer.drawText(themedFontId(UI_10_FONT_ID), metrics.contentSidePadding,
+                      infoTop + height + metrics.verticalSpacing,
                       (std::string(tr(STR_NEW_VERSION)) + updater.getLatestVersion()).c_str());
 
     if (confirmPopup.processRender(renderer, mappedInput)) return;
   } else if (state == UPDATE_IN_PROGRESS) {
-    renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_UPDATING));
+    renderer.drawCenteredText(themedFontId(UI_10_FONT_ID), top, tr(STR_UPDATING));
 
     int y = top + height + metrics.verticalSpacing;
     GUI.drawProgressBar(
@@ -147,25 +149,25 @@ void OtaUpdateActivity::render(RenderLock&&) {
     // so the bytes line below stays at the same Y it was at when the activity drew its own percent.
     y += height + metrics.verticalSpacing;
     renderer.drawCenteredText(
-        UI_10_FONT_ID, y,
+        themedFontId(UI_10_FONT_ID), y,
         (std::to_string(updater.getProcessedSize()) + " / " + std::to_string(updater.getTotalSize())).c_str());
   } else if (state == NO_UPDATE) {
-    renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_NO_UPDATE), true, EpdFontFamily::BOLD);
+    renderer.drawCenteredText(themedFontId(UI_10_FONT_ID), top, tr(STR_NO_UPDATE), true, EpdFontFamily::BOLD);
     const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   } else if (state == FAILED) {
-    renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_UPDATE_FAILED), true, EpdFontFamily::BOLD);
+    renderer.drawCenteredText(themedFontId(UI_10_FONT_ID), top, tr(STR_UPDATE_FAILED), true, EpdFontFamily::BOLD);
     if (failedDetail != nullptr) {
-      renderer.drawCenteredText(UI_10_FONT_ID, top + height + metrics.verticalSpacing, failedDetail);
+      renderer.drawCenteredText(themedFontId(UI_10_FONT_ID), top + height + metrics.verticalSpacing, failedDetail);
     }
     const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   } else if (state == FINISHED) {
-    renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_UPDATE_COMPLETE), true, EpdFontFamily::BOLD);
+    renderer.drawCenteredText(themedFontId(UI_10_FONT_ID), top, tr(STR_UPDATE_COMPLETE), true, EpdFontFamily::BOLD);
     const int hintY = top + height + metrics.verticalSpacing;
     const Rect hintBounds{metrics.contentSidePadding, hintY, pageWidth - metrics.contentSidePadding * 2,
                           pageHeight - hintY};
-    UITheme::drawCenteredWrappedText(renderer, hintBounds, UI_10_FONT_ID, tr(STR_POWER_ON_HINT), 3, true,
+    UITheme::drawCenteredWrappedText(renderer, hintBounds, themedFontId(UI_10_FONT_ID), tr(STR_POWER_ON_HINT), 3, true,
                                      EpdFontFamily::REGULAR, UITheme::TextVerticalAlignment::TOP);
   }
 

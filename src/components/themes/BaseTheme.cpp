@@ -58,7 +58,6 @@ void drawBookmarkStatusIcon(const GfxRenderer& renderer, const int x, const int 
   }
 }
 
-
 // "Chapter 3: The Ring Goes South" -> "The Ring Goes South". Only trims when
 // a name follows a separator (: . - en/em dash), so "Chapter 3" stays. The
 // number may be digits, Roman numerals or words ("Twenty-One").
@@ -98,13 +97,11 @@ void trimChapterPrefix(std::string& text) {
   std::string number;
   for (size_t k = numberStart; k < i; k++) number += lowerAt(k);
   static constexpr const char* kNumberWords[] = {
-      "one",     "two",     "three",     "four",     "five",    "six",     "seven",   "eight",
-      "nine",    "ten",     "eleven",    "twelve",   "thirteen", "fourteen", "fifteen", "sixteen",
-      "seventeen", "eighteen", "nineteen", "twenty", "thirty",   "forty",   "fifty",   "sixty",
-      "seventy", "eighty",  "ninety",    "hundred"};
+      "one",    "two",    "three",    "four",     "five",    "six",     "seven",     "eight",    "nine",     "ten",
+      "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty",
+      "thirty", "forty",  "fifty",    "sixty",    "seventy", "eighty",  "ninety",    "hundred"};
   const auto isNumberWord = [](const std::string& part) {
-    return std::any_of(std::begin(kNumberWords), std::end(kNumberWords),
-                       [&part](const char* w) { return part == w; });
+    return std::any_of(std::begin(kNumberWords), std::end(kNumberWords), [&part](const char* w) { return part == w; });
   };
   bool isNumber = number.find_first_not_of("0123456789") == std::string::npos ||
                   number.find_first_not_of("ivxlc") == std::string::npos;
@@ -147,8 +144,8 @@ void titleCaseIfAllCaps(std::string& text) {
     if (at(i) >= 'a' && at(i) <= 'z') return;
     if (at(i) == 0xC3 && i + 1 < text.size() && at(i + 1) >= 0xA0 && at(i + 1) <= 0xBE) return;
   }
-  static constexpr const char* kSmallWords[] = {"a",  "an", "and", "as", "at", "but", "by", "for", "from",
-                                                "in", "of", "on",  "or", "the", "to", "with"};
+  static constexpr const char* kSmallWords[] = {"a",    "an", "and", "as", "at", "but", "by", "for",
+                                                "from", "in", "of",  "on", "or", "the", "to", "with"};
   const auto isUpper = [&](const size_t i) { return (at(i) >= 'A' && at(i) <= 'Z') || isAccentUpper(i); };
   bool capitalizeNext = true;
   size_t i = 0;
@@ -159,7 +156,8 @@ void titleCaseIfAllCaps(std::string& text) {
       continue;
     }
     size_t end = i;
-    while (end < text.size() && (isUpper(end) || text[end] == '\'' || at(end) >= 0x80)) end += isAccentUpper(end) ? 2 : 1;
+    while (end < text.size() && (isUpper(end) || text[end] == '\'' || at(end) >= 0x80))
+      end += isAccentUpper(end) ? 2 : 1;
     std::string word = text.substr(i, end - i);
     const bool roman = word.find_first_not_of("IVXLC") == std::string::npos;
     std::string lower = word;
@@ -187,6 +185,11 @@ void titleCaseIfAllCaps(std::string& text) {
 }
 
 }  // namespace
+
+void shortenChapterTitle(std::string& title) {
+  trimChapterPrefix(title);
+  titleCaseIfAllCaps(title);
+}
 
 void BaseTheme::drawBatteryOutline(const GfxRenderer& renderer, int x, int y, int battWidth, int rectHeight) {
   // Top line
@@ -581,20 +584,22 @@ void BaseTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* t
 
 void BaseTheme::drawSubHeader(const GfxRenderer& renderer, Rect rect, const char* label, const char* rightLabel) const {
   constexpr int labelGap = 10;
+  const int smallFontId = themedFontId(SMALL_FONT_ID);
+  const int labelFontId = themedFontId(UI_12_FONT_ID);
   const int contentWidth = std::max(0, rect.width - BaseMetrics::values.contentSidePadding * 2);
 
   int labelWidth = contentWidth;
   if (rightLabel) {
-    auto truncatedRightLabel = renderer.truncatedText(SMALL_FONT_ID, rightLabel, contentWidth, EpdFontFamily::REGULAR);
-    const int rightLabelWidth = renderer.getTextWidth(SMALL_FONT_ID, truncatedRightLabel.c_str());
-    renderer.drawText(SMALL_FONT_ID, rect.x + rect.width - BaseMetrics::values.contentSidePadding - rightLabelWidth,
+    auto truncatedRightLabel = renderer.truncatedText(smallFontId, rightLabel, contentWidth, EpdFontFamily::REGULAR);
+    const int rightLabelWidth = renderer.getTextWidth(smallFontId, truncatedRightLabel.c_str());
+    renderer.drawText(smallFontId, rect.x + rect.width - BaseMetrics::values.contentSidePadding - rightLabelWidth,
                       rect.y + 7, truncatedRightLabel.c_str());
     labelWidth = std::max(0, contentWidth - rightLabelWidth - labelGap);
   }
 
   if (labelWidth > 0) {
-    auto truncatedLabel = renderer.truncatedText(UI_12_FONT_ID, label, labelWidth, EpdFontFamily::REGULAR);
-    renderer.drawText(UI_12_FONT_ID, rect.x + BaseMetrics::values.contentSidePadding, rect.y, truncatedLabel.c_str(),
+    auto truncatedLabel = renderer.truncatedText(labelFontId, label, labelWidth, EpdFontFamily::REGULAR);
+    renderer.drawText(labelFontId, rect.x + BaseMetrics::values.contentSidePadding, rect.y, truncatedLabel.c_str(),
                       true, EpdFontFamily::REGULAR);
   }
 }
@@ -931,6 +936,19 @@ void BaseTheme::fillRibbon(const GfxRenderer& renderer, const int left, const in
   renderer.fillPolygon(xs, ys, 5, true);
 }
 
+namespace {
+int readerProgressRibbonWidth(const GfxRenderer& renderer) {
+  int marginTop, marginRight, marginBottom, marginLeft;
+  renderer.getOrientedViewableTRBL(&marginTop, &marginRight, &marginBottom, &marginLeft);
+  return std::clamp(marginRight + SETTINGS.screenMargin - 2, 8, 16);
+}
+}  // namespace
+
+void BaseTheme::clearReaderProgressRibbon(const GfxRenderer& renderer) {
+  const int width = readerProgressRibbonWidth(renderer);
+  renderer.fillRect(renderer.getScreenWidth() - width, 0, width, renderer.getScreenHeight(), false);
+}
+
 // Hangs in the right margin from the screen edge, between the running head and the bottom margin.
 void BaseTheme::drawReaderProgressRibbon(const GfxRenderer& renderer, const int percent, const bool textAtTop,
                                          const int paddingBottom, const bool paperState) {
@@ -939,7 +957,7 @@ void BaseTheme::drawReaderProgressRibbon(const GfxRenderer& renderer, const int 
   int marginTop, marginRight, marginBottom, marginLeft;
   renderer.getOrientedViewableTRBL(&marginTop, &marginRight, &marginBottom, &marginLeft);
   const int right = renderer.getScreenWidth() - 1;
-  const int width = std::clamp(marginRight + SETTINGS.screenMargin - 2, 8, 16);
+  const int width = readerProgressRibbonWidth(renderer);
   const int travelTop = marginTop + (textAtTop ? UITheme::getStatusBarTopHeight(renderer) : 0);
   const int travelBottom = renderer.getScreenHeight() - marginBottom - paddingBottom - SETTINGS.screenMargin;
   const int travel = std::max(0, travelBottom - travelTop - kRibbonHeight);
@@ -961,11 +979,11 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
   // Draw Progress Text
   const auto screenHeight = renderer.getScreenHeight();
   // At the top, place the reader-font line (book style) below the padding.
-  auto textY = textAtTop ? orientedMarginTop + UITheme::kStatusBarTopPadding +
-                               renderer.getFontAscenderSize(SETTINGS.getReaderFontId()) -
-                               renderer.getFontAscenderSize(SMALL_FONT_ID)
-                         : screenHeight - UITheme::getInstance().getStatusBarHeight() - orientedMarginBottom -
-                               paddingBottom - 4;
+  auto textY =
+      textAtTop
+          ? orientedMarginTop + UITheme::kStatusBarTopPadding +
+                renderer.getFontAscenderSize(SETTINGS.getReaderFontId()) - renderer.getFontAscenderSize(SMALL_FONT_ID)
+          : screenHeight - UITheme::getInstance().getStatusBarHeight() - orientedMarginBottom - paddingBottom - 4;
 
   const int leftClusterX = metrics.statusBarHorizontalMargin + orientedMarginLeft + 1;
   const int rightClusterX = renderer.getScreenWidth() - metrics.statusBarHorizontalMargin - orientedMarginRight;
@@ -1113,8 +1131,7 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
       // Share the progress text's baseline.
       titleFontId = SETTINGS.getReaderFontId();
       titleStyle = EpdFontFamily::ITALIC;
-      trimChapterPrefix(title);
-      titleCaseIfAllCaps(title);
+      shortenChapterTitle(title);
       titleY = textY + renderer.getFontAscenderSize(SMALL_FONT_ID) - renderer.getFontAscenderSize(titleFontId);
     }
 
@@ -1139,9 +1156,11 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
 
 void BaseTheme::drawHelpText(const GfxRenderer& renderer, Rect rect, const char* label) {
   const auto& metrics = UITheme::getInstance().getMetrics();
-  auto truncatedLabel =
-      renderer.truncatedText(SMALL_FONT_ID, label, rect.width - metrics.contentSidePadding * 2, EpdFontFamily::REGULAR);
-  renderer.drawCenteredText(SMALL_FONT_ID, rect.y, truncatedLabel.c_str());
+  // Book-styled themes set help lines as an italic aside in the reader font.
+  const int fontId = themedFontId(SMALL_FONT_ID);
+  const auto style = metrics.uiUsesReaderFont ? EpdFontFamily::ITALIC : EpdFontFamily::REGULAR;
+  auto truncatedLabel = renderer.truncatedText(fontId, label, rect.width - metrics.contentSidePadding * 2, style);
+  renderer.drawCenteredText(fontId, rect.y, truncatedLabel.c_str(), true, style);
 }
 
 void BaseTheme::drawTextField(const GfxRenderer& renderer, Rect rect, const int textWidth, bool cursorMode,

@@ -29,6 +29,8 @@ class EpubReaderPercentSelectionActivity final : public Activity, private UiAppH
 
   // Current percent value (0-100) shown on the slider.
   int percent = 0;
+  // The readout says where the reader is until the value first moves.
+  bool moved = false;
 
   ButtonNavigator buttonNavigator;
 

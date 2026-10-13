@@ -49,7 +49,8 @@ struct ThemeMetrics {
   int listRowRadius;       // row corner radius (RoundedRaff cards, Lyra pill)
   int listInset;           // horizontal inset of the whole list band
   int listSidePadding;     // text inset within a row
-  int listSelectionStyle;  // 0=invert fill, 1=light pill, 2=underline, 3=triangle, 4=highlighter, 5=pencil (fui::SelectionStyle order)
+  int listSelectionStyle;  // 0=invert fill, 1=light pill, 2=underline, 3=triangle, 4=highlighter, 5=pencil
+                           // (fui::SelectionStyle order)
   int listScrollWidth;     // scroll indicator thickness
   int listScrollSide;      // 0 = right edge, 1 = left edge
   bool listTitleBold;      // bold row titles (RoundedRaff)
@@ -67,6 +68,8 @@ struct ThemeMetrics {
   int listScrollMargin = 0;
   // Sheets are edged with a pencil line instead of a rule or shadow (Pulp).
   bool sheetPencilRule = false;
+  // Popup dialogs are outlined with a pencil line instead of a border (Pulp).
+  bool popupPencilFrame = false;
   // UI text uses the current reader font instead of the built-in UI font (Pulp).
   bool uiUsesReaderFont = false;
   // Settings is one list with a heading per category instead of tabs (Pulp).
@@ -76,6 +79,8 @@ struct ThemeMetrics {
   // Select in a book opens a short menu sheet over the page instead of the
   // reader menu style's toolbar or full-screen list (Pulp).
   bool readerMenuSheet = false;
+  // Slider dialogs (go to %, intervals) open as a bottom sheet, not a centered popup (Pulp).
+  bool sliderDialogSheet = false;
   // Status bar like a book's running head: pages left ("6", not "25/31") and the
   // chapter title in the reader font's italic (Pulp).
   bool statusBarBookStyle = false;
@@ -272,6 +277,10 @@ constexpr ThemeMetrics values = {.batteryWidth = 15,
                                  .capsuleRadius = 0};
 }
 
+// Running-head form of a chapter title: "CHAPTER 3: THE RING GOES SOUTH" ->
+// "The Ring Goes South".
+void shortenChapterTitle(std::string& title);
+
 class BaseTheme {
  public:
   virtual ~BaseTheme() = default;
@@ -294,8 +303,10 @@ class BaseTheme {
     fillRibbon(renderer, left, right, top, height, notch, true);
   }
   // Places the progress ribbon where the reader page shows it; the sleep cover reuses it.
-  static void drawReaderProgressRibbon(const GfxRenderer& renderer, int percent, bool textAtTop,
-                                       int paddingBottom = 0, bool paperState = false);
+  static void drawReaderProgressRibbon(const GfxRenderer& renderer, int percent, bool textAtTop, int paddingBottom = 0,
+                                       bool paperState = false);
+  // Blanks the margin column the reader progress ribbon travels in.
+  static void clearReaderProgressRibbon(const GfxRenderer& renderer);
   void drawBatteryLeft(const GfxRenderer& renderer, Rect rect,
                        bool showPercentage = true) const;  // Left aligned (reader mode)
   virtual void fillBatteryIcon(const GfxRenderer& renderer, Rect rect, uint16_t percentage) const;
@@ -357,13 +368,19 @@ class BaseTheme {
   virtual int homeCoverThumbHeight(const GfxRenderer&) const { return 0; }
   // Home cover tile height; 0 means use metrics.homeCoverTileHeight.
   virtual int homeCoverTileHeight(const GfxRenderer&) const { return 0; }
+  // Books shelf cover grid: thumb height for its covers, 0 for no grid.
+  virtual int shelfCoverHeight(const GfxRenderer&) const { return 0; }
+  // Height of one grid row, selection marks included.
+  virtual int shelfCellHeight(const GfxRenderer&) const { return 0; }
+  // One recent book in its grid cell.
+  virtual void drawShelfBook(GfxRenderer&, Rect, const RecentBook&, int, bool) const {}
   // Highlighter-pen stroke behind a run of text, before the text is drawn.
   // Returns false when the theme has none (callers draw their own fill).
   // Straight highlighter band behind text in a line box at lineTop, for
   // selections built up word by word. False: callers draw their own fill.
   // Muted: lighter, for saved highlights behind a selection being made.
-  virtual bool drawTextHighlightBand(const GfxRenderer&, int /*x*/, int /*lineTop*/, int /*width*/,
-                                     int /*lineHeight*/, bool /*muted*/ = false) const {
+  virtual bool drawTextHighlightBand(const GfxRenderer&, int /*x*/, int /*lineTop*/, int /*width*/, int /*lineHeight*/,
+                                     bool /*muted*/ = false) const {
     return false;
   }
   virtual bool drawTextHighlighter(const GfxRenderer&, int /*textX*/, int /*lineTop*/, int /*textWidth*/,

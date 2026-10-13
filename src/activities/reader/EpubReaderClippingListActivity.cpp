@@ -11,6 +11,7 @@
 #include "DictionaryDefinitionActivity.h"
 #include "MappedInputManager.h"
 #include "clippings/ClippingPreview.h"
+#include "components/UIScale.h"
 #include "components/UITheme.h"
 #include "components/UiAppHelpers.h"
 #include "fontIds.h"
@@ -28,7 +29,6 @@ EpubReaderClippingListActivity::EpubReaderClippingListActivity(GfxRenderer& rend
 
 void EpubReaderClippingListActivity::onEnter() {
   UiListActivity::onEnter();
-  initialListRender = true;
   rebuildRows();
 }
 
@@ -59,9 +59,18 @@ void EpubReaderClippingListActivity::refreshRowWindow(const int start) {
     }
 
     fui::ListItem item;
-    item.label = clipping && clipping->chapterTitle[0] != '\0' ? clipping->chapterTitle : tr(STR_CLIPPINGS);
-    item.subtitle = previews[slot].data();
-    item.icon = listIconFor(UIIcon::Bookmark, 32);
+    const char* chapter = clipping && clipping->chapterTitle[0] != '\0' ? clipping->chapterTitle : tr(STR_CLIPPINGS);
+    if (UITheme::getInstance().getMetrics().bookStyleLists) {
+      // The clipping is the row; its chapter, shortened like the running head, follows it.
+      chapterCaptions[slot] = chapter;
+      shortenChapterTitle(chapterCaptions[slot]);
+      item.label = previews[slot].data();
+      item.subtitle = chapterCaptions[slot].c_str();
+    } else {
+      item.label = chapter;
+      item.subtitle = previews[slot].data();
+      item.icon = listIconFor(UIIcon::Bookmark, 32);
+    }
     item.actionValue = static_cast<int16_t>(clippingIndex);
     rowItems[slot] = item;
   }
@@ -187,7 +196,7 @@ void EpubReaderClippingListActivity::buildScreen(UiScreen& screen) {
   }
 
   if (!mappedInput.hasTouch()) {
-    const int helpHeight = renderer.getLineHeight(UI_10_FONT_ID);
+    const int helpHeight = renderer.getLineHeight(themedFontId(UI_10_FONT_ID));
     const fui::Rect band = screen.takeBottom(static_cast<int16_t>(helpHeight + metrics.verticalSpacing));
     GUI.drawHelpText(renderer, Rect{band.x, band.y + metrics.verticalSpacing, band.width, helpHeight},
                      tr(STR_HOLD_SELECT_TO_DELETE));
@@ -197,6 +206,15 @@ void EpubReaderClippingListActivity::buildScreen(UiScreen& screen) {
   props.count = static_cast<uint16_t>(listCount());
   props.action = ACTION_ROW;
   props.inputMask = fui::InputTouch | fui::InputLongPress;
+  if (metrics.bookStyleLists) {
+    // Chapter as an italic caption under the clipping.
+    props.pencilBookmarkMarker = true;
+    props.subtitleText = screen.theme().bodyText;
+    props.subtitleText.italic = true;
+    props.labelText = screen.theme().bodyText;
+    props.labelText.maxLines = 3;
+    props.subtitleGap = static_cast<int16_t>(metrics.verticalSpacing / 2);
+  }
   syncListViewport(screen, props);
   refreshRowWindow(nav.top);
   props.items = rowItems.data();
@@ -206,11 +224,6 @@ void EpubReaderClippingListActivity::buildScreen(UiScreen& screen) {
 }
 
 void EpubReaderClippingListActivity::render(RenderLock&& lock) {
-  if (initialListRender && listCount() > 0) {
-    renderer.clearScreen();
-    GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
-  }
-  initialListRender = false;
   UiListActivity::render(std::move(lock));
   if (confirmPopup.processRender(renderer, mappedInput)) return;
 }
