@@ -113,6 +113,50 @@ void UiListActivity::navigateButtons() {
   });
 }
 
+void UiListActivity::stepRowsWithSectionJumps(const int direction, const int count) {
+  if (count <= 0) return;
+  const int row = std::clamp(activeNav().selected - rowSelectionOffset(), 0, count - 1);
+  const unsigned long now = millis();
+  const bool rapid = burstPresses > 0 && direction == burstDirection && now - lastStepMs <= kRapidPressMs;
+  lastStepMs = now;
+  burstDirection = direction;
+  if (!rapid) {
+    burstPresses = 1;
+    burstOriginRow = row;
+    moveSelectionTo(rowSelectionOffset() + (direction > 0 ? ButtonNavigator::nextIndex(row, count) : ButtonNavigator::previousIndex(row, count)));
+    return;
+  }
+  // The second press measures from where the burst began, undoing the first
+  // single-row step (which may have wrapped).
+  const int from = burstPresses == 1 ? burstOriginRow : row;
+  ++burstPresses;
+  int target = from;
+  if (direction < 0) {
+    target = 0;
+    for (int r = from - 1; r > 0; --r) {
+      if (rowStartsSection(r)) {
+        target = r;
+        break;
+      }
+    }
+  } else {
+    target = count - 1;
+    for (int r = from + 1; r < count; ++r) {
+      if (rowStartsSection(r)) {
+        target = r;
+        break;
+      }
+    }
+  }
+  moveSelectionTo(rowSelectionOffset() + target);
+}
+
+void UiListActivity::holdStepRows(const int direction, const int count) {
+  if (count <= 0) return;
+  const int row = std::clamp(activeNav().selected - rowSelectionOffset(), 0, count - 1);
+  moveSelectionTo(rowSelectionOffset() + std::clamp(row + direction, 0, count - 1));
+}
+
 void UiListActivity::syncListViewport(UiScreen& screen, fui::ListProps& props, const int selectionOffset) {
   props.toggleCheckbox = true;
   props.toggleWidth = 28;
@@ -150,6 +194,32 @@ void UiListActivity::drawFooter() {
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 }
 
+void UiListActivity::buildBottomSheet(UiScreen& screen, const int sheetTop) {
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  fui::SheetProps sheetProps;
+  sheetProps.anchor = fui::SheetEdge::Bottom;
+  sheetProps.grabberHeight = 0;
+  sheetProps.grabberMargin = 0;
+  sheetProps.grabberInset = static_cast<int16_t>(metrics.verticalSpacing);
+  // A pencil-edged theme draws its line; others get a shadow above the sheet.
+  sheetProps.ruleWidth = metrics.sheetPencilRule ? 2 : 0;
+  screen.sheet(sheetProps, static_cast<int16_t>(screen.frame().safeRect().bottom() - sheetTop));
+  if (!metrics.sheetPencilRule) {
+    const fui::Rect full = screen.frame().device().screen();
+    screen.target().fill(fui::Rect{full.x, static_cast<int16_t>(sheetTop - kSheetShadow), full.width, kSheetShadow},
+                         fui::Paint::dither(fui::Color::LightGray));
+  }
+
+  screen.takeBottom(static_cast<int16_t>(metrics.verticalSpacing + metrics.buttonHintsHeight));
+}
+
+void UiListActivity::renderSheetUi() {
+  renderUi();
+  for (int pass = 0; activeNav().consumeRebuildNeeded() && pass < 8; ++pass) renderUi();
+  drawFooter();
+  present();
+}
+
 void UiListActivity::render(RenderLock&&) {
   renderer.clearScreen();
   drawChrome();
@@ -165,5 +235,5 @@ void UiListActivity::render(RenderLock&&) {
     renderUi();
   }
   drawFooter();
-  renderer.displayBuffer();
+  present();
 }

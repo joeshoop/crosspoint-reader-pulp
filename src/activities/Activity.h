@@ -49,6 +49,9 @@ class Activity {
   // transitions so no filesystem code races a raw SD-card owner.
   virtual bool requiresExclusiveStorageLoop() const { return false; }
   virtual bool isReaderActivity() const { return false; }
+  // The sunlight fading fix (panel power-down after each refresh, ~290 ms)
+  // applies only while this is true: book pages, not menus.
+  virtual bool wantsFadingFix() const { return false; }
   // Returns true when the activity schedules its own forced refresh.
   virtual bool handleForcedRefresh() { return false; }
   virtual bool isHomeActivity() const { return false; }

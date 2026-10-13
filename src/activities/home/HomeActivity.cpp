@@ -198,7 +198,9 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
             RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
             book.coverBmpPath = "";
           }
+          // The stored snapshot holds the placeholder; redraw the tile from scratch.
           coverRendered = false;
+          coverBufferStored = false;
           requestUpdate();
         } else if (FsHelpers::hasXtcExtension(book.path)) {
           // Handle XTC file
@@ -216,6 +218,7 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
               book.coverBmpPath = "";
             }
             coverRendered = false;
+            coverBufferStored = false;
             requestUpdate();
           }
         }

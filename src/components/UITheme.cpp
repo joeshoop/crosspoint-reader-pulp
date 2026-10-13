@@ -172,10 +172,19 @@ int UITheme::getStatusBarHeight() {
          (sb.showsProgressBar() ? (sb.progressBarHeightPx + metrics.progressBarMarginTop) : 0);
 }
 
+int UITheme::getStatusBarTopHeight(const GfxRenderer& renderer) {
+  if (!UITheme::getInstance().getMetrics().statusBarTextAtTop || !SETTINGS.statusBarSpec().textLaneVisible(true)) {
+    return 0;
+  }
+  return 2 * kStatusBarTopPadding + renderer.getLineHeight(SETTINGS.getReaderFontId());
+}
+
 int UITheme::getProgressBarHeight() {
   const ThemeMetrics metrics = UITheme::getInstance().getMetrics();
   const auto sb = SETTINGS.statusBarSpec();
-  return sb.showsProgressBar() ? (sb.progressBarHeightPx + metrics.progressBarMarginTop) : 0;
+  // The ribbon sits in the right margin and takes no height.
+  if (!sb.showsProgressBar() || metrics.progressRibbon) return 0;
+  return sb.progressBarHeightPx + metrics.progressBarMarginTop;
 }
 
 // Centered text implementation that takes the safe area into account

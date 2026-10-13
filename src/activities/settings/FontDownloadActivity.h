@@ -43,6 +43,9 @@ class FontDownloadActivity final : public UiListActivity {
   bool skipLoopDelay() override { return true; }
 
  private:
+  // The family list's script group ("Latin"), or nullptr on other screens.
+  const char* groupHeading() const;
+
   enum State {
     WIFI_SELECTION,
     LOADING_MANIFEST,

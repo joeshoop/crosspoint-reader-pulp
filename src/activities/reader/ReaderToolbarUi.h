@@ -45,12 +45,11 @@ class ReaderToolbarUi : public UiAppHost {
     // Button boards keep the theme's denser list row height (as every other
     // list does there); touch boards use FreeInkUI's finger-sized rows.
     bool denseRows = false;
-    // Menu sheet (readerMenuSheet themes): a panel with no tool row, the title
-    // and subtitle set as a centered heading, and rows styled like the
-    // theme's full-screen lists. Uses panelTitle, itemCount and rowText.
+    // Menu sheet (readerMenuSheet themes): a panel with no tool row, the book
+    // title as a centered heading, and rows styled like the theme's
+    // full-screen lists. Uses sheetTitle, itemCount and rowText.
     bool menuSheet = false;
-    const char* panelSubtitle = nullptr;
-    const char* sheetTitle = nullptr;  // book title, set like a page title above panelTitle
+    const char* sheetTitle = nullptr;
   };
 
   struct Routed {
@@ -81,6 +80,12 @@ class ReaderToolbarUi : public UiAppHost {
   freeink::ui::ListNav& nav() { return nav_; }
   // Rows one page holds, measured after the first render.
   int visibleRows() const { return nav_.pageRows(); }
+  // Top edge of the menu sheet's first row in the last render.
+  int menuSheetFirstRowY() const { return menuSheetFirstRowY_; }
+  // First row the menu sheet showed in the last render (it scrolls).
+  int menuSheetTopRow() const { return menuSheetTopRow_; }
+  // Top edge of the menu sheet in the last render.
+  int menuSheetTop() const { return menuSheetTop_; }
 
  private:
   static void screenFn(UiScreen& screen, void* user);
@@ -97,6 +102,8 @@ class ReaderToolbarUi : public UiAppHost {
   // Row window materialised for the visible page only (a contents list runs to
   // hundreds of entries; labels are copied here so ListItem can point at them).
   static constexpr int kMaxWindow = 16;
+  // Menu sheet rows on screen; the rest scroll.
+  static constexpr int kMenuSheetRows = 4;
   std::string windowLabels_[kMaxWindow];
   std::string windowValues_[kMaxWindow];
   freeink::ui::ListItem windowItems_[kMaxWindow];
@@ -105,4 +112,7 @@ class ReaderToolbarUi : public UiAppHost {
   freeink::ui::ButtonProps stepProps_;
   freeink::ui::ListProps listProps_;
   freeink::ui::Rect pageIndicatorRect_{};
+  int menuSheetFirstRowY_ = -1;
+  int menuSheetTopRow_ = 0;
+  int menuSheetTop_ = -1;
 };

@@ -20,6 +20,7 @@
 #include "activities/network/WifiSelectionActivity.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "components/UITheme.h"
+#include "components/UIThemeTokens.h"
 #include "fontIds.h"
 #include "network/HttpDownloader.h"
 
@@ -771,6 +772,21 @@ void FontDownloadActivity::buildScreen(UiScreen& screen) {
   }
 
   fui::ListProps props;
+  if (metrics.bookStyleLists) {
+    // The script group, pinned under the title like a section heading.
+    if (const char* heading = groupHeading()) {
+      applySectionHeadingStyle(screen.theme(), props);
+      const fui::Rect row = screen.takeTop(static_cast<int16_t>(metrics.listRowHeight));
+      const int16_t lh = screen.target().lineHeight(props.headerText.font);
+      screen.target().text(fui::Rect{row.x, static_cast<int16_t>(row.y + (row.height - lh) / 2), row.width, lh},
+                           heading, props.headerText);
+    }
+    // Italic descriptions set apart from the name, so the selection marks the name.
+    props.subtitleText = screen.theme().smallText;
+    props.subtitleText.italic = true;
+    props.subtitleGap = 4;
+    props.rowGap = static_cast<int16_t>(metrics.verticalSpacing);
+  }
   props.items = rowItems_.data();
   props.count = static_cast<uint16_t>(rowItems_.size());
   props.action = ACTION_ROW;
@@ -924,6 +940,14 @@ std::string FontDownloadActivity::formatSize(size_t bytes) {
   return buf;
 }
 
+const char* FontDownloadActivity::groupHeading() const {
+  if (state_ != FAMILY_LIST || !hasGroupScreen()) return nullptr;
+  const int scriptGroupIndex = groupNav_.selected - 1;
+  return scriptGroupIndex >= 0 && scriptGroupIndex < static_cast<int>(scriptGroupLabels_.size())
+             ? str(scriptGroupLabels_[scriptGroupIndex])
+             : tr(STR_ALL_FONTS);
+}
+
 void FontDownloadActivity::render(RenderLock&&) {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const auto pageWidth = renderer.getScreenWidth();
@@ -931,15 +955,9 @@ void FontDownloadActivity::render(RenderLock&&) {
 
   renderer.clearScreen();
 
-  const char* headerSubtitle = nullptr;
-  if (state_ == FAMILY_LIST && hasGroupScreen()) {
-    const int scriptGroupIndex = groupNav_.selected - 1;
-    headerSubtitle = scriptGroupIndex >= 0 && scriptGroupIndex < static_cast<int>(scriptGroupLabels_.size())
-                         ? str(scriptGroupLabels_[scriptGroupIndex])
-                         : tr(STR_ALL_FONTS);
-  }
+  // Book-style lists show the group as a heading above the list instead.
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_FONT_BROWSER),
-                 headerSubtitle);
+                 metrics.bookStyleLists ? nullptr : groupHeading());
 
   const auto lineHeight = renderer.getLineHeight(UI_10_FONT_ID);
   const auto centerY = (pageHeight - lineHeight) / 2;

@@ -18,6 +18,12 @@ void HomeButtonSettingsActivity::activateIndex(int index) {
   const auto field = home_button::FIELDS[index];
   const uint8_t value = SETTINGS.*field;
   const int current = value < static_cast<uint8_t>(HomeButtonAction::Count) ? value : 0;
+  if (UITheme::getInstance().getMetrics().settingsCycleValues) {
+    SETTINGS.*field = static_cast<uint8_t>((current + 1) % static_cast<int>(HomeButtonAction::Count));
+    SETTINGS.saveToFile();
+    requestUpdate();
+    return;
+  }
   optionPopup.show(home_button::GESTURE_LABELS[index], home_button::ACTION_LABELS,
                    static_cast<int>(HomeButtonAction::Count), current, [field](int selected) {
                      SETTINGS.*field = static_cast<uint8_t>(selected);

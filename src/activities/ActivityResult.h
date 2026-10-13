@@ -41,8 +41,9 @@ struct PageResult {
 };
 
 struct ClippingResult {
-  enum class Action : uint8_t { Clip, Lookup, Bookmark };
+  enum class Action : uint8_t { Clip, Lookup, Bookmark, Remove };
   Action action = Action::Clip;
+  int editedClipping = -1;  // saved clipping this selection replaces (Clip) or removes (Remove)
   std::string text;
   uint16_t startPageOffset = 0;
   uint16_t endPageOffset = 0;

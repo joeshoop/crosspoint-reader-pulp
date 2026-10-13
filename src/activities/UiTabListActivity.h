@@ -54,15 +54,8 @@ class UiTabListActivity : public UiListActivity {
   // Move to a ring position: tab bar rewinds the viewport, a row pulls the
   // viewport to itself.
   void moveRingTo(int ringIndex);
-  // Row lists without a tab bar (ring 1..count). A single press steps one row.
-  // A rapid second press in the same direction jumps to the start of the
-  // section the burst began in (Previous) or of the next section (Next); each
-  // further rapid press jumps one more section.
-  void stepRowsWithSectionJumps(int direction, int count);
-  // Holding a button repeats single-row steps, stopping at either end.
-  void holdStepRows(int direction, int count);
-  // Whether row (0-based) begins a section; row 0 always does.
-  virtual bool rowStartsSection(int row) const { return row == 0; }
+  // Row lists without a tab bar: the rows start at ring 1.
+  int rowSelectionOffset() const override { return 1; }
 
   // --- screen helpers --------------------------------------------------------
   // The shared tab band: theme-driven pill treatment (label-hugging Lyra vs
@@ -79,12 +72,6 @@ class UiTabListActivity : public UiListActivity {
   bool navigationStartedOnTabs = false;
 
  private:
-  // Rapid-press burst state for stepRowsWithSectionJumps.
-  static constexpr unsigned long kRapidPressMs = 200;
-  unsigned long lastStepMs = 0;
-  int burstDirection = 0;
-  int burstPresses = 0;
-  int burstOriginRow = 0;
 
  protected:
 

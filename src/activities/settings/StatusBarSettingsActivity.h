@@ -1,4 +1,7 @@
 #pragma once
+#include <I18n.h>
+
+#include <cstdint>
 #include <string>
 
 #include "activities/UiListActivity.h"
@@ -30,6 +33,7 @@ class StatusBarSettingsActivity final : public UiListActivity {
   std::string rowValueText(int index);
 
   void handleSelection();
+  void chooseValue(StrId title, const StrId* names, int count, uint8_t& value);
 
   // Row storage: MAX_STATUS_BAR_ITEMS is a compile-time constant, so
   // fixed-capacity storage avoids any heap allocation for the row list.

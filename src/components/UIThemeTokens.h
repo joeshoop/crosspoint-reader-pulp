@@ -30,12 +30,13 @@ inline freeink::ui::ThemeTokens uiThemeTokens(const freeink::ui::GfxRendererTarg
   }
   tokens.listScrollWidth = static_cast<int16_t>(metrics.listScrollWidth);
   tokens.listScrollSide = static_cast<uint8_t>(metrics.listScrollSide);
-  // No extra scroll-track inset: the bezel is already compensated once at the
-  // frame level (GfxRendererTarget::deviceContext() feeds the board's
+  // A design gap only, 0 by default: the bezel is already compensated once at
+  // the frame level (GfxRendererTarget::deviceContext() feeds the board's
   // viewable insets into the fui safe area, and every list band derives from
-  // safeRect()). Adding the same inset here doubled the compensation and
+  // safeRect()). Adding the bezel inset here doubled the compensation and
   // floated the track a full bezel-width inside the visible edge.
-  tokens.listScrollInset = 0;
+  tokens.listScrollInset = static_cast<int16_t>(metrics.listScrollInset);
+  tokens.listScrollMargin = static_cast<int16_t>(metrics.listScrollMargin);
   // Screen::header()/status() band height. Without this the SDK's
   // line-height-derived default applies and fui-drawn headers (OPDS) come out
   // a different height than every GUI.drawHeader band.
@@ -47,6 +48,7 @@ inline freeink::ui::ThemeTokens uiThemeTokens(const freeink::ui::GfxRendererTarg
   // so the control center follows the theme like every list and header does.
   tokens.controlRadius = static_cast<uint8_t>(metrics.controlRadius);
   tokens.sheetRadius = static_cast<uint8_t>(metrics.sheetRadius);
+  tokens.sheetPencilRule = metrics.sheetPencilRule;
   tokens.capsuleRadius = static_cast<uint8_t>(metrics.capsuleRadius);
   tokens.bodyText.bold = metrics.listTitleBold;
   tokens.titleText.bold = metrics.headerTitleBold;

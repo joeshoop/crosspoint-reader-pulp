@@ -43,12 +43,16 @@ class EpubReaderActivity final : public ReaderActivity {
   static constexpr uint8_t MAX_PAGE_LOAD_RETRIES = 3;
   bool skipNextButtonCheck = false;
   bool automaticPageTurnActive = false;
-  bool showBookmarkMessage = false;
-  bool showDictionaryMessage = false;
-  unsigned long dictionaryMessageTime = 0UL;
-  bool showClippingMessage = false;
-  StrId clippingMessage = StrId::STR_CLIPPING_SAVED;
-  unsigned long clippingMessageTime = 0UL;
+  // Short confirmation ("Bookmark added", "Clipping saved"): shown in place of
+  // the running head's title, or as a popup when there is no running head.
+  // It appears after a short delay so it doesn't change in the same refresh
+  // that closes the menu sheet.
+  static constexpr unsigned long kNoticeDelayMs = 500;
+  bool noticePending = false;
+  bool noticeShown = false;
+  StrId noticeText = StrId::STR_BOOKMARK_ADDED;
+  unsigned long noticeTime = 0UL;
+  void showNotice(StrId text);
   bool currentPageBookmarked = false;
   int idlePrewarmSpine = -1;
   int idlePrewarmPage = -1;
@@ -56,7 +60,6 @@ class EpubReaderActivity final : public ReaderActivity {
   bool bookmarkRemoved = false;
   std::vector<BookmarkEntry> cachedBookmarks;
   bool recentsEntryRemoved = false;
-  unsigned long bookmarkMessageTime = 0UL;
   bool pendingReadFolderMove = false;
 
   // Toolbar reader menu (SETTINGS.readerMenuStyle == READER_MENU_TOOLBAR): drawn
@@ -183,12 +186,15 @@ class EpubReaderActivity final : public ReaderActivity {
   void runLeafMenuAction(EpubReaderMenuActivity::MenuAction action);
   // Menu sheet rows (readerMenuSheet themes); the last row opens the full menu.
   void activateMenuSheetRow(int row);
+  // Screen y of the sheet's chapter row while Contents opens from it, else -1.
+  int contentsAnchorY = -1;
+  // Screen y of the sheet's top edge while Text Settings opens from it, else -1.
+  int textSettingsSheetTop = -1;
   void openListMenu();
   void openFootnoteSelect(bool reopenMenuOnCancel);
   void openDictionaryWordSelect();
   void startClipSelection(int initialX = -1, int initialY = -1,
                           ClipSelectionActivity::Mode mode = ClipSelectionActivity::Mode::Clip);
-  int clippingAtPoint(const Page& page, int x, int y) const;
   void openClippings();
   void applyProgressChange(const ProgressChangeResult& progress);
   bool launchKOReaderSync();
@@ -241,6 +247,8 @@ class EpubReaderActivity final : public ReaderActivity {
 
   void loop() override;
   void render(RenderLock&& lock) override;
+  // The in-reader sheet and toolbar are menus: no fading fix while one is open.
+  bool wantsFadingFix() const override { return overlay == Overlay::None; }
 
   bool pageTurn(bool isForward) override;
   bool skipPages(int amount) override;

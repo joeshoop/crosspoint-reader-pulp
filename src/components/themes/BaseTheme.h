@@ -49,7 +49,7 @@ struct ThemeMetrics {
   int listRowRadius;       // row corner radius (RoundedRaff cards, Lyra pill)
   int listInset;           // horizontal inset of the whole list band
   int listSidePadding;     // text inset within a row
-  int listSelectionStyle;  // 0=invert fill, 1=light pill, 2=underline, 3=triangle, 4=highlighter (fui::SelectionStyle order)
+  int listSelectionStyle;  // 0=invert fill, 1=light pill, 2=underline, 3=triangle, 4=highlighter, 5=pencil (fui::SelectionStyle order)
   int listScrollWidth;     // scroll indicator thickness
   int listScrollSide;      // 0 = right edge, 1 = left edge
   bool listTitleBold;      // bold row titles (RoundedRaff)
@@ -61,6 +61,12 @@ struct ThemeMetrics {
   bool bookStyleLists = false;
   // Lists show "N more" / "N above" in a row slot instead of a scrollbar (Pulp).
   bool listOverflowCounts = false;
+  // Gap between the scroll indicator and the screen edge.
+  int listScrollInset = 0;
+  // Rows a list keeps visible past the selection as it scrolls (Pulp).
+  int listScrollMargin = 0;
+  // Sheets are edged with a pencil line instead of a rule or shadow (Pulp).
+  bool sheetPencilRule = false;
   // UI text uses the current reader font instead of the built-in UI font (Pulp).
   bool uiUsesReaderFont = false;
   // Settings is one list with a heading per category instead of tabs (Pulp).
@@ -70,9 +76,15 @@ struct ThemeMetrics {
   // Select in a book opens a short menu sheet over the page instead of the
   // reader menu style's toolbar or full-screen list (Pulp).
   bool readerMenuSheet = false;
-  // Status bar like a book's running foot: pages left ("6", not "25/31") and the
+  // Status bar like a book's running head: pages left ("6", not "25/31") and the
   // chapter title in the reader font's italic (Pulp).
   bool statusBarBookStyle = false;
+  // In the reader, the status bar's text line runs along the top of the page; a
+  // progress bar stays at the bottom (Pulp).
+  bool statusBarTextAtTop = false;
+  // The reader's progress bar is a ribbon on the right page edge, lower as more
+  // is read, like the cover bookmark (Pulp).
+  bool progressRibbon = false;
   // Home labels the side buttons as well as the front ones (Pulp).
   bool homeSideButtonHints = false;
   // FreeInkUI header shape, same contract as the list fields above.
@@ -111,6 +123,8 @@ struct ThemeMetrics {
   // Library is one Books list: File Transfer, then Recent and On This Device
   // sections, with no sort tabs or search (Pulp).
   bool libraryBookShelf = false;
+  // The cover sleep screen marks reading progress with a ribbon on the right edge (Pulp).
+  bool sleepCoverBookmark = false;
   int homeMenuTopOffset;
 
   int buttonHintsHeight;
@@ -270,6 +284,18 @@ class BaseTheme {
   // slot. Rescaling a dithered bitmap aliases badly, so overflow is cropped.
   static bool drawCoverThumbFill(const GfxRenderer& renderer, const Bitmap& bitmap, Rect slot, int xOffset = 0);
   static void drawProgressBar(const GfxRenderer& renderer, Rect rect, size_t current, size_t total);
+  // Bookmark ribbon from left to right with a notched tail on one end.
+  static void fillRibbon(const GfxRenderer& renderer, int left, int right, int top, int height, int notch,
+                         bool notchOnLeft);
+  // The reader's progress ribbon (metrics.progressRibbon), notched on the left.
+  // paperState fills the ribbon's unpainted pixels, for drawing over images.
+  virtual void drawProgressRibbon(const GfxRenderer& renderer, int left, int right, int top, int height, int notch,
+                                  bool paperState = false) const {
+    fillRibbon(renderer, left, right, top, height, notch, true);
+  }
+  // Places the progress ribbon where the reader page shows it; the sleep cover reuses it.
+  static void drawReaderProgressRibbon(const GfxRenderer& renderer, int percent, bool textAtTop,
+                                       int paddingBottom = 0, bool paperState = false);
   void drawBatteryLeft(const GfxRenderer& renderer, Rect rect,
                        bool showPercentage = true) const;  // Left aligned (reader mode)
   virtual void fillBatteryIcon(const GfxRenderer& renderer, Rect rect, uint16_t percentage) const;
@@ -280,6 +306,8 @@ class BaseTheme {
   static void drawHintLabel(const GfxRenderer& renderer, int fontId, const char* label, int x, int boxWidth, int boxTop,
                             int boxHeight);
   virtual void drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn) const;
+  // Labels the power button where the theme supports it.
+  virtual void drawPowerButtonHint(const GfxRenderer& renderer, const char* label) const {}
   // Menu row height as DRAWN by drawButtonMenu. HomeActivity builds its touch
   // grid from this, so hit bands always match the visuals (RoundedRaff derives
   // its row height from the font, not the metrics table).
@@ -288,8 +316,9 @@ class BaseTheme {
   // SETTINGS.clockShowInHeader and an RTC is present. On touch boards a
   // tappable back button leads the band (see HeaderBackTapTarget); root
   // screens that own their stack bottom pass backButton = false.
+  // titleMaxLines > 1 wraps the title; the caller sizes rect for the lines.
   virtual void drawHeader(const GfxRenderer& renderer, Rect rect, const char* title, const char* subtitle = nullptr,
-                          bool backButton = true) const;
+                          bool backButton = true, uint8_t titleMaxLines = 1) const;
   // Fill the battery/clock status chrome (settings + theme metrics) into
   // header props, so FUI-native screens drawing their own interactive header
   // carry the same band as drawHeader. Status text is styled with the
@@ -309,13 +338,16 @@ class BaseTheme {
                               const std::function<std::string(int index)>& buttonLabel,
                               const std::function<UIIcon(int index)>& rowIcon) const;
   static void drawSelectionHandle(const GfxRenderer& renderer, Rect rect, bool left);
-  static void drawSelectionActions(const GfxRenderer& renderer, Rect rect);
+  // editing: a saved clipping is selected; adds Delete and saves with Done.
+  static void drawSelectionActions(const GfxRenderer& renderer, Rect rect, bool editing = false);
   virtual Rect drawPopup(const GfxRenderer& renderer, const char* message) const;
+  // Font for drawPopup's message.
+  virtual int popupFontId() const;
   virtual void fillPopupProgress(const GfxRenderer& renderer, const Rect& layout, const int progress) const;
   static void drawStatusBar(GfxRenderer& renderer, const float bookProgress, const int currentPage, const int pageCount,
                             std::string title, const int paddingBottom = 0, const int textYOffset = 0,
                             const bool fillMargin = true, const bool isPageBookmarked = false,
-                            const bool pageCountEstimated = false);
+                            const bool pageCountEstimated = false, const bool textAtTop = false);
   static void drawHelpText(const GfxRenderer& renderer, Rect rect, const char* label);
   virtual void drawTextField(const GfxRenderer& renderer, Rect rect, const int textWidth, bool cursorMode = false,
                              int contentStartX = 0, int contentWidth = 0) const;
@@ -325,6 +357,25 @@ class BaseTheme {
   virtual int homeCoverThumbHeight(const GfxRenderer&) const { return 0; }
   // Home cover tile height; 0 means use metrics.homeCoverTileHeight.
   virtual int homeCoverTileHeight(const GfxRenderer&) const { return 0; }
+  // Highlighter-pen stroke behind a run of text, before the text is drawn.
+  // Returns false when the theme has none (callers draw their own fill).
+  // Straight highlighter band behind text in a line box at lineTop, for
+  // selections built up word by word. False: callers draw their own fill.
+  // Muted: lighter, for saved highlights behind a selection being made.
+  virtual bool drawTextHighlightBand(const GfxRenderer&, int /*x*/, int /*lineTop*/, int /*width*/,
+                                     int /*lineHeight*/, bool /*muted*/ = false) const {
+    return false;
+  }
+  virtual bool drawTextHighlighter(const GfxRenderer&, int /*textX*/, int /*lineTop*/, int /*textWidth*/,
+                                   int /*lineHeight*/, uint32_t /*seed*/, bool /*muted*/ = false) const {
+    return false;
+  }
+  // Frame round the word under a text cursor, kept inside the given box;
+  // anchored once a selection has started from it. False: callers draw their own.
+  virtual bool drawTextCursor(const GfxRenderer&, int /*x*/, int /*y*/, int /*width*/, int /*height*/,
+                              bool /*anchored*/) const {
+    return false;
+  }
 
   // Shared constants and helpers for battery drawing (used by all themes)
   static constexpr int batteryPercentSpacing = 4;

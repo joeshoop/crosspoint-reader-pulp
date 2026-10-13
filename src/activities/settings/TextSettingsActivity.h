@@ -3,6 +3,7 @@
 #include <SdCardFontRegistry.h>
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -20,8 +21,13 @@ class TextSettingsActivity final : public UiTabListActivity {
  public:
   enum class Tab : uint8_t { Family, Size, Layout, Style, Count };
 
+  // sheetTop >= 0 (single-list themes, opened from the reader's menu sheet):
+  // the rows sit in a bottom sheet with its top edge at that screen y, over the
+  // page the reader left in the framebuffer. drawRunningHead redraws the
+  // reader's running head when an edit changes the page's text.
   TextSettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const SdCardFontRegistry* registry,
-                       Tab initialTab = Tab::Family);
+                       Tab initialTab = Tab::Family, int sheetTop = -1,
+                       std::function<void()> drawRunningHead = nullptr);
 
   void onEnter() override;
   void render(RenderLock&&) override;
@@ -65,7 +71,20 @@ class TextSettingsActivity final : public UiTabListActivity {
   static constexpr int kLayoutStart = 2;
   static constexpr int kStyleStart = kLayoutStart + static_cast<int>(LayoutRow::Count);
   static constexpr int kSingleListCount = kStyleStart + static_cast<int>(StyleRow::Count);
+  void buildSingleList(UiScreen& screen);
   void activateSingleListRow(int row);
+
+  // Sheet mode: the page above the sheet stays as the reader drew it until a
+  // setting changes its text, then the preview redraws it in the reader's text box.
+  const int sheetTop_;
+  const std::function<void()> drawRunningHead_;
+  bool inSheet() const { return sheetTop_ >= 0 && usesSingleList(); }
+  void renderSheet();
+  // Screen rows the page preview owns: below the running head, above the sheet's shadow.
+  int pageBandTop() const;
+  int pageBandBottom() const;
+  textsettings::PreviewKey entryKey_;
+  bool pageEdited_ = false;
   void cycleLayoutRow(int row);
   std::string singleListValueText(int row) const;
 
@@ -85,7 +104,7 @@ class TextSettingsActivity final : public UiTabListActivity {
   const char* confirmLabelText() const;
   // True when the focused list row is a setting the preview cannot reflect.
   bool focusedRowHasNoPreview() const;
-  void renderPreviewGrayscale();
+  void present() override;
   void switchTab(int direction = 1);
 
   // Row storage for the active tab: rowItems_ (label/actionValue) is
@@ -124,4 +143,6 @@ class TextSettingsActivity final : public UiTabListActivity {
   int bottomReserved = 0;
   int usableHeight = 0;
   int previewHeight = 0;
+  // Hash of the preview region whose grays are on the glass; 0 when none are.
+  uint32_t grayPreviewHash_ = 0;
 };

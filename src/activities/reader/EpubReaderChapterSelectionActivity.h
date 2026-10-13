@@ -32,11 +32,30 @@ class EpubReaderChapterSelectionActivity final : public UiListActivity {
   // Back cancels with a result and Confirm activates on RELEASE here, and a
   // missing epub swallows everything past Back.
   bool handleButtons() override;
+  // A rapid second press jumps between top-level entries.
+  void navigateButtons() override;
+  bool rowStartsSection(int row) const override;
   // Header is drawn inside the safe area (not full-width like the base).
   void drawChrome() override;
+  void render(RenderLock&& lock) override;
+
+  // Opened from the reader's menu sheet: the current chapter's row starts at
+  // this screen y, where the sheet showed it, so only the rows around it
+  // appear. -1 = normal layout. The shift is a blank band above the list,
+  // dropped once the viewport moves.
+  int anchorY = -1;
+  int anchorShift = 0;
+  int anchoredTop = -1;
+
+  // Book-style lists title the contents with the book, wrapped like the menu
+  // sheet's title; the header grows by this much for the extra lines.
+  static constexpr int kBookTitleMaxLines = 4;
+  int headerExtraHeight = 0;
+  const char* headerTitle() const override;
 
  public:
   explicit EpubReaderChapterSelectionActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
-                                              const std::shared_ptr<Epub>& epub, int currentSpineIndex);
+                                              const std::shared_ptr<Epub>& epub, int currentSpineIndex,
+                                              int anchorY = -1);
   void onEnter() override;
 };

@@ -4,6 +4,7 @@
 #include <GfxRenderer.h>
 #include <I18n.h>
 
+#include <algorithm>
 #include <string>
 
 #include "MappedInputManager.h"
@@ -16,10 +17,11 @@ namespace fui = freeink::ui;
 EpubReaderChapterSelectionActivity::EpubReaderChapterSelectionActivity(GfxRenderer& renderer,
                                                                        MappedInputManager& mappedInput,
                                                                        const std::shared_ptr<Epub>& epub,
-                                                                       const int currentSpineIndex)
+                                                                       const int currentSpineIndex, const int anchorY)
     : UiListActivity("EpubReaderChapterSelection", renderer, mappedInput),
       epub(epub),
-      currentSpineIndex(currentSpineIndex) {}
+      currentSpineIndex(currentSpineIndex),
+      anchorY(anchorY) {}
 
 void EpubReaderChapterSelectionActivity::onEnter() {
   UiListActivity::onEnter();
@@ -46,6 +48,24 @@ void EpubReaderChapterSelectionActivity::onEnter() {
     tocIndex = 0;
   }
   nav.selected = tocIndex;
+
+  if (UITheme::getInstance().getMetrics().bookStyleLists) {
+    const auto& metrics = UITheme::getInstance().getMetrics();
+    const Rect safe = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
+    const int titleFontId = uiScaleSpec().titleFontId;
+    const int lines = static_cast<int>(
+        renderer
+            .wrappedText(titleFontId, headerTitle(), safe.width - 2 * metrics.headerSidePadding, kBookTitleMaxLines,
+                         metrics.headerTitleBold ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR)
+            .size());
+    headerExtraHeight = std::max(0, lines - 1) * renderer.getLineHeight(titleFontId);
+  }
+}
+
+const char* EpubReaderChapterSelectionActivity::headerTitle() const {
+  const bool bookTitle =
+      UITheme::getInstance().getMetrics().bookStyleLists && epub && !epub->getTitle().empty();
+  return bookTitle ? epub->getTitle().c_str() : tr(STR_SELECT_CHAPTER);
 }
 
 // Materialize the ListItem/label window starting at `start` (clamped). TOC
@@ -70,7 +90,6 @@ void EpubReaderChapterSelectionActivity::refreshTocWindow(const int start) {
     windowLabels[i] = indent + tocItem.title;
     fui::ListItem item;
     item.label = windowLabels[i].c_str();
-    if (bookStyle && clamped + i == 0) item.sectionHeading = tr(STR_TABLE_OF_CONTENTS);
     item.actionValue = static_cast<int16_t>(clamped + i);
     windowItems[i] = item;
   }
@@ -130,6 +149,25 @@ bool EpubReaderChapterSelectionActivity::handleButtons() {
   return false;
 }
 
+void EpubReaderChapterSelectionActivity::navigateButtons() {
+  const int count = listCount();
+  if (count <= 0) return;
+  buttonNavigator.onNextPress([this, count] { stepRowsWithSectionJumps(1, count); });
+  buttonNavigator.onPreviousPress([this, count] { stepRowsWithSectionJumps(-1, count); });
+  // Holding still pages through the list.
+  buttonNavigator.onNextContinuous([this, count] {
+    moveSelectionTo(ButtonNavigator::nextPageIndex(nav.selected, count, nav.inputPageRows()));
+  });
+  buttonNavigator.onPreviousContinuous([this, count] {
+    moveSelectionTo(ButtonNavigator::previousPageIndex(nav.selected, count, nav.inputPageRows()));
+  });
+}
+
+// One SD read per row checked; a jump walks only to the next top-level entry.
+bool EpubReaderChapterSelectionActivity::rowStartsSection(const int row) const {
+  return row == 0 || epub->getTocItem(row).level <= 1;
+}
+
 void EpubReaderChapterSelectionActivity::buildScreen(UiScreen& screen) {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const Rect safe = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
@@ -137,7 +175,7 @@ void EpubReaderChapterSelectionActivity::buildScreen(UiScreen& screen) {
   // Book-style lists keep their rows clear of the button hints.
   const int hintsReserve = metrics.bookStyleLists ? metrics.buttonHintsHeight : 0;
   screen.setContentMarginFromScreen(
-      fui::Insets{static_cast<int16_t>(safe.y + metrics.topPadding + metrics.headerHeight),
+      fui::Insets{static_cast<int16_t>(safe.y + metrics.topPadding + metrics.headerHeight + headerExtraHeight),
                   static_cast<int16_t>(renderer.getScreenWidth() - (safe.x + safe.width)),
                   static_cast<int16_t>(renderer.getScreenHeight() - (safe.y + safe.height) + hintsReserve),
                   static_cast<int16_t>(safe.x)});
@@ -150,6 +188,19 @@ void EpubReaderChapterSelectionActivity::buildScreen(UiScreen& screen) {
     screen.centeredText(tr(STR_NO_CHAPTERS), screen.theme().bodyText);
     return;
   }
+
+  if (metrics.bookStyleLists) {
+    // The list's heading, pinned under the title while the rows scroll.
+    fui::ListProps headingProps;
+    applySectionHeadingStyle(screen.theme(), headingProps);
+    const fui::Rect row = screen.takeTop(static_cast<int16_t>(metrics.listRowHeight));
+    const int16_t lh = screen.target().lineHeight(headingProps.headerText.font);
+    screen.target().text(fui::Rect{row.x, static_cast<int16_t>(row.y + (row.height - lh) / 2), row.width, lh},
+                         tr(STR_TABLE_OF_CONTENTS), headingProps.headerText);
+  }
+
+  if (anchoredTop >= 0 && nav.top != anchoredTop) anchorShift = 0;  // scrolled: use the full height
+  if (anchorShift > 0) screen.spacer(static_cast<int16_t>(anchorShift));
 
   fui::ListProps props;
   props.count = static_cast<uint16_t>(listCount());
@@ -166,11 +217,55 @@ void EpubReaderChapterSelectionActivity::buildScreen(UiScreen& screen) {
   screen.list(props);
 }
 
+void EpubReaderChapterSelectionActivity::render(RenderLock&&) {
+  const auto build = [this] {
+    renderer.clearScreen();
+    drawChrome();
+    renderUi();
+    for (int pass = 0; nav.consumeRebuildNeeded() && pass < 8; ++pass) {
+      renderer.clearScreen();
+      drawChrome();
+      renderUi();
+    }
+  };
+  build();
+
+  // First frame from the sheet: move the viewport and the blank band until the
+  // selected row sits at anchorY. Rows above it come from scrolling back;
+  // what is left (or all of it near the start) from the band. Near the end
+  // the list cannot scroll far enough and the row lands lower.
+  if (anchorY >= 0 && anchoredTop < 0) {
+    const int rowH = std::max(1, UITheme::getInstance().getMetrics().listRowHeight);
+    for (int pass = 0; pass < 4 && nav.selectedRowY >= 0; ++pass) {
+      const int delta = anchorY - nav.selectedRowY;
+      if (delta == 0) break;
+      if (delta > 0) {
+        const int rows = std::min(nav.top, delta / rowH);
+        if (rows > 0) {
+          nav.top -= rows;
+        } else {
+          anchorShift += delta;
+        }
+      } else if (anchorShift >= -delta) {
+        anchorShift += delta;
+      } else {
+        nav.top += (-delta - anchorShift + rowH - 1) / rowH;
+        anchorShift = 0;
+      }
+      nav.followOnBuild = false;
+      build();
+    }
+    anchoredTop = nav.top;
+  }
+
+  drawFooter();
+  present();
+}
+
 void EpubReaderChapterSelectionActivity::drawChrome() {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const Rect safe = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
-  // Book-style lists title the contents with the book itself.
-  const char* title =
-      metrics.bookStyleLists && epub && !epub->getTitle().empty() ? epub->getTitle().c_str() : tr(STR_SELECT_CHAPTER);
-  GUI.drawHeader(renderer, Rect{safe.x, safe.y + metrics.topPadding, safe.width, metrics.headerHeight}, title);
+  GUI.drawHeader(renderer,
+                 Rect{safe.x, safe.y + metrics.topPadding, safe.width, metrics.headerHeight + headerExtraHeight},
+                 headerTitle(), nullptr, true, metrics.bookStyleLists ? kBookTitleMaxLines : 1);
 }

@@ -23,18 +23,22 @@ constexpr ThemeMetrics values = {.batteryWidth = 15,
                                  .listRowRadius = 4,
                                  .listInset = 8,
                                  .listSidePadding = 16,
-                                 .listSelectionStyle = 4,  // fui::SelectionStyle::Highlighter
-                                 .listScrollWidth = 2,
+                                 .listSelectionStyle = 5,  // fui::SelectionStyle::Pencil
+                                 .listScrollWidth = 5,
                                  .listScrollSide = 0,
                                  .listTitleBold = false,
                                  .listSelectionBorder = 0,
                                  .bookStyleLists = true,
-                                 .listOverflowCounts = true,
+                                 .listScrollInset = 4,
+                                 .listScrollMargin = 3,
+                                 .sheetPencilRule = true,
                                  .uiUsesReaderFont = true,
                                  .settingsSingleList = true,
                                  .settingsCycleValues = true,
                                  .readerMenuSheet = true,
                                  .statusBarBookStyle = true,
+                                 .statusBarTextAtTop = true,
+                                 .progressRibbon = true,
                                  .homeSideButtonHints = true,
                                  .headerSidePadding = 16,
                                  .headerUnderlineSize = 0,
@@ -58,7 +62,8 @@ constexpr ThemeMetrics values = {.batteryWidth = 15,
                                  .homeContinueReadingInMenu = false,
                                  .homeMinimalMenu = true,
                                  .libraryBookShelf = true,
-                                 .homeMenuTopOffset = 10,
+                                 .sleepCoverBookmark = true,
+                                 .homeMenuTopOffset = 4,  // = menuSpacing: Continue Reading spaced like a menu row
                                  .buttonHintsHeight = 20,
                                  .sideButtonHintsWidth = 30,
                                  .progressBarHeight = 16,
@@ -103,12 +108,23 @@ class PulpTheme : public BaseTheme {
                            int selectorIndex, bool& coverRendered, bool& coverBufferStored, bool& bufferRestored,
                            std::function<bool()> storeCoverBuffer) const override;
   int getMenuRowHeight(const GfxRenderer& renderer) const override;
+  int popupFontId() const override;
+  Rect drawPopup(const GfxRenderer& renderer, const char* message) const override;
   int homeCoverTileHeight(const GfxRenderer& renderer) const override;
   int homeCoverThumbHeight(const GfxRenderer& renderer) const override;
+  bool drawTextHighlightBand(const GfxRenderer& renderer, int x, int lineTop, int width, int lineHeight,
+                             bool muted) const override;
+  bool drawTextHighlighter(const GfxRenderer& renderer, int textX, int lineTop, int textWidth, int lineHeight,
+                           uint32_t seed, bool muted) const override;
+  bool drawTextCursor(const GfxRenderer& renderer, int x, int y, int width, int height,
+                      bool anchored) const override;
   void drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                       const std::function<std::string(int index)>& buttonLabel,
                       const std::function<UIIcon(int index)>& rowIcon) const override;
   void drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,
                        const char* btn4) const override;
   void drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn) const override;
+  void drawPowerButtonHint(const GfxRenderer& renderer, const char* label) const override;
+  void drawProgressRibbon(const GfxRenderer& renderer, int left, int right, int top, int height, int notch,
+                          bool paperState) const override;
 };

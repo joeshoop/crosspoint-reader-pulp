@@ -334,7 +334,9 @@ void ReaderToolbarUi::buildPanel(UiScreen& screen) {
 void ReaderToolbarUi::buildMenuSheet(UiScreen& screen) {
   const auto& tokens = screen.theme();
   const auto& metrics = UITheme::getInstance().getMetrics();
-  const int count = std::clamp(model_.itemCount, 0, kMaxWindow);
+  const int count = std::max(0, model_.itemCount);
+  // At most kMenuSheetRows show; the rest scroll into view.
+  const int shownRows = std::min(count, kMenuSheetRows);
 
   fui::SheetProps sheetProps;
   sheetProps.anchor = fui::SheetEdge::Bottom;
@@ -342,11 +344,13 @@ void ReaderToolbarUi::buildMenuSheet(UiScreen& screen) {
   sheetProps.grabberHeight = 0;
   sheetProps.grabberMargin = 0;
   sheetProps.grabberInset = static_cast<int16_t>(metrics.verticalSpacing);
+  // A pencil-edged theme draws its line; others get no rule but a shadow
+  // above the edge, like the home screen's book.
+  sheetProps.ruleWidth = metrics.sheetPencilRule ? 2 : 0;
 
   // Heading rows match the full-screen lists' row height; the sheet fits them
   // and every menu row exactly.
   const int16_t rowH = static_cast<int16_t>(metrics.listRowHeight);
-  const int headingRows = (model_.panelTitle ? 1 : 0) + (model_.panelSubtitle ? 1 : 0);
   const fui::Insets headingInset{0, static_cast<int16_t>(metrics.contentSidePadding), 0,
                                  static_cast<int16_t>(metrics.contentSidePadding)};
 
@@ -363,41 +367,61 @@ void ReaderToolbarUi::buildMenuSheet(UiScreen& screen) {
                     [&lines](const char*, fui::Rect) { ++lines; });
     titleH = static_cast<int16_t>(rowH + std::max(0, lines - 1) * screen.target().lineHeight(titleStyle.font));
   }
-  screen.sheet(sheetProps, static_cast<int16_t>(sheetProps.grabberInset + titleH + (headingRows + count) * rowH +
-                                                metrics.verticalSpacing));
+  // The foot band holds the button hints the reader draws over the sheet.
+  constexpr int16_t kSheetShadow = 10;
+  const fui::Rect sheetRect =
+      screen.sheet(sheetProps, static_cast<int16_t>(sheetProps.grabberInset + titleH + shownRows * rowH +
+                                                    metrics.verticalSpacing + metrics.buttonHintsHeight));
+  // sheet() returns the content band; the sheet's edge sits grabberInset above it.
+  menuSheetTop_ = sheetRect.y - sheetProps.grabberInset;
+  if (!metrics.sheetPencilRule) {
+    const fui::Rect full = screen.frame().device().screen();
+    screen.target().fill(fui::Rect{full.x, static_cast<int16_t>(menuSheetTop_ - kSheetShadow), full.width,
+                                   kSheetShadow},
+                         fui::Paint::dither(fui::Color::LightGray));
+  }
 
-  fui::TextStyle headingStyle = tokens.bodyText;
-  headingStyle.bold = false;
-  headingStyle.italic = true;
-  headingStyle.align = fui::TextAlign::Center;
-  headingStyle.maxLines = 1;
   if (model_.sheetTitle) {
     screen.target().text(screen.takeTop(titleH).inset(headingInset), model_.sheetTitle, titleStyle);
   }
-  if (model_.panelTitle) screen.target().text(screen.takeTop(rowH).inset(headingInset), model_.panelTitle, headingStyle);
-  if (model_.panelSubtitle) {
-    fui::TextStyle subtitleStyle = headingStyle;
-    subtitleStyle.italic = false;
-    screen.target().text(screen.takeTop(rowH).inset(headingInset), model_.panelSubtitle, subtitleStyle);
-  }
+  menuSheetFirstRowY_ = screen.body().y;
+  // The foot band is the button hints'; the rows take what is left.
+  screen.takeBottom(static_cast<int16_t>(metrics.verticalSpacing + metrics.buttonHintsHeight));
 
-  for (int i = 0; i < count; ++i) {
-    windowLabels_[i] = model_.rowText ? model_.rowText(i) : std::string();
-    fui::ListItem item;
-    item.label = windowLabels_[i].c_str();
-    item.actionValue = static_cast<int16_t>(i);
-    windowItems_[i] = item;
-  }
-  listProps_.items = windowItems_;
   listProps_.count = static_cast<uint16_t>(count);
-  listProps_.itemsWindowFirst = 0;
-  listProps_.itemsWindowCount = static_cast<uint16_t>(count);
   listProps_.action = ACTION_ROW;
   listProps_.inputMask = fui::InputTouch;  // physical buttons stay with the reader
   listProps_.rowHeight = rowH;
   listProps_.rowGap = 0;
   listProps_.labelText = tokens.bodyText;
   listProps_.labelText.maxLines = 1;
-  listProps_.selectedIndex = static_cast<int16_t>(model_.selectedIndex);
+  // Values set like the single-list Settings rows.
+  listProps_.valueText = tokens.bodyText;
+  listProps_.valueInset = 0;
+  // Same nav idiom as the panels: a shown cursor follows into view, a hidden
+  // one (touch) leaves the viewport where scrolling put it.
+  nav_.selected = std::clamp(model_.selectedIndex, -1, count - 1);
+  nav_.followOnBuild = nav_.selected >= 0;
+  nav_.followPending = false;
+  nav_.syncToProps(screen.body(), rowH, 0, count, listProps_);
+  menuSheetTopRow_ = nav_.top;
+
+  // Materialise only the visible window of rows.
+  const int windowFirst = nav_.top;
+  const int windowCount = std::min({nav_.visibleRows, count - windowFirst, kMaxWindow});
+  for (int i = 0; i < windowCount; ++i) {
+    const int index = windowFirst + i;
+    windowLabels_[i] = model_.rowText ? model_.rowText(index) : std::string();
+    windowValues_[i] = model_.rowValue ? model_.rowValue(index) : std::string();
+    fui::ListItem item;
+    item.label = windowLabels_[i].c_str();
+    item.value = windowValues_[i].empty() ? nullptr : windowValues_[i].c_str();
+    item.actionValue = static_cast<int16_t>(index);
+    if (model_.rowCheckbox) model_.rowCheckbox(model_.rowCheckboxContext, index, item);
+    windowItems_[i] = item;
+  }
+  listProps_.items = windowItems_;
+  listProps_.itemsWindowFirst = static_cast<uint16_t>(windowFirst);
+  listProps_.itemsWindowCount = static_cast<uint16_t>(std::max(0, windowCount));
   if (count > 0) screen.list(listProps_);
 }

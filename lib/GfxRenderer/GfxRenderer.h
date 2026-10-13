@@ -459,6 +459,9 @@ class GfxRenderer {
   // copyRegionToBuffer / copyBufferToRegion: false if `bufSize` is smaller than that.
   size_t getRegionByteSize(int logicalX, int logicalY, int logicalW, int logicalH) const;
   bool copyRegionToBuffer(int logicalX, int logicalY, int logicalW, int logicalH, uint8_t* buf, size_t bufSize) const;
+  // FNV-1a over the framebuffer bytes covering the rect (byte-widened like the
+  // copies above); 0 when the rect is off-screen. Detects an unchanged region.
+  uint32_t regionHash(int logicalX, int logicalY, int logicalW, int logicalH) const;
   bool copyBufferToRegion(int logicalX, int logicalY, int logicalW, int logicalH, const uint8_t* buf,
                           size_t bufSize) const;
 };

@@ -26,10 +26,22 @@
 #include "activities/reader/ReaderUtils.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "util/BookProgress.h"
 #include "images/Logo120.h"
 #include "images/MoonIcon.h"
 
 namespace {
+// The reader's progress ribbon, in the same place, so it stays put going to
+// sleep. Drawn in every pass so the cover's grays stay out of it.
+void drawSleepBookmark(const GfxRenderer& renderer, const int percent) {
+  // Plane passes: black is the neutral bit either way; white needs the
+  // explicit "white" bit on absolute panels and the neutral bit otherwise.
+  const bool bw = renderer.getRenderMode() == GfxRenderer::BW;
+  const bool paperState = !bw && !renderer.grayPlanesAreAbsolute();
+  BaseTheme::drawReaderProgressRibbon(renderer, percent, UITheme::getInstance().getMetrics().statusBarTextAtTop, 0,
+                                      paperState);
+}
+
 // Metalio: B/W sleep images use the full 0xF7 waveform instead of HALF (two
 // 0xFC partials), matching the clean pass before absolute gray below.
 #if FREEINK_DEVICE_METALIO_EINK4
@@ -650,7 +662,8 @@ void SleepActivity::renderDefaultSleepScreen() const {
   renderer.displayBuffer(kSleepClean);
 }
 
-void SleepActivity::renderBitmapSleepScreen(const Bitmap& bitmap, const bool preserveBackground) const {
+void SleepActivity::renderBitmapSleepScreen(const Bitmap& bitmap, const bool preserveBackground,
+                                            const int bookmarkPercent) const {
   const auto pageWidth = renderer.getScreenWidth();
   const auto pageHeight = renderer.getScreenHeight();
   const auto placement = calculateBitmapPlacement(bitmap.getWidth(), bitmap.getHeight(), renderer);
@@ -676,6 +689,7 @@ void SleepActivity::renderBitmapSleepScreen(const Bitmap& bitmap, const bool pre
       SETTINGS.sleepScreenCoverFilter == CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::INVERTED_BLACK_AND_WHITE) {
     renderer.invertScreen();
   }
+  if (bookmarkPercent >= 0) drawSleepBookmark(renderer, bookmarkPercent);
 
   const bool absolute = hasGreyscale && renderer.grayscaleCapabilities(sleepGrayscaleMode(renderer)).supported();
   if (absolute) {
@@ -704,6 +718,7 @@ void SleepActivity::renderBitmapSleepScreen(const Bitmap& bitmap, const bool pre
         ready = false;
         break;
       }
+      if (bookmarkPercent >= 0) drawSleepBookmark(renderer, bookmarkPercent);
       if (plane == GfxRenderer::GRAYSCALE_LSB)
         renderer.copyGrayscaleLsbBuffers();
       else
@@ -871,7 +886,8 @@ void SleepActivity::renderCoverSleepScreen() const {
     Bitmap bitmap(file);
     if (bitmap.parseHeaders() == BmpReaderError::Ok) {
       LOG_DBG("SLP", "Rendering sleep cover: %s", coverBmpPath.c_str());
-      renderBitmapSleepScreen(bitmap);
+      const bool bookmark = UITheme::getInstance().getMetrics().sleepCoverBookmark;
+      renderBitmapSleepScreen(bitmap, false, bookmark ? loadBookProgress(APP_STATE.openEpubPath) : -1);
       return;
     }
   }

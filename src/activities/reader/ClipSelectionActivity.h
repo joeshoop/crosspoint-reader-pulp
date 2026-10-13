@@ -5,6 +5,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -17,10 +18,19 @@
 class ClipSelectionActivity final : public Activity {
  public:
   enum class Mode : uint8_t { Clip, Lookup };
+  // Where pages[0] sits, so the clippings already on these pages are shown,
+  // and the reader's running head, drawn so the text keeps its place.
+  struct SavedClippings {
+    uint16_t spineIndex = 0;
+    uint16_t firstPage = 0;
+    uint16_t pageCount = 0;  // 0: show none
+    uint32_t layoutSignature = 0;
+    std::function<void()> drawRunningHead;
+  };
 
   ClipSelectionActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
-                        std::vector<std::unique_ptr<Page>> pages, int marginLeft, int marginTop, int initialX = -1,
-                        int initialY = -1, Mode mode = Mode::Clip);
+                        std::vector<std::unique_ptr<Page>> pages, int marginLeft, int marginTop, int initialX,
+                        int initialY, Mode mode, SavedClippings saved);
 
   void onEnter() override;
   void loop() override;
@@ -45,6 +55,8 @@ class ClipSelectionActivity final : public Activity {
     bool paragraphStart = false;
     bool isRtl = false;
     bool discretionaryHyphen = false;
+    bool clipped = false;  // inside a saved clipping
+    int16_t clipping = -1;  // the first saved clipping it is inside
   };
 
   static constexpr size_t MAX_SELECTABLE_WORDS = 240;
@@ -72,10 +84,28 @@ class ClipSelectionActivity final : public Activity {
   void drawSelection() const;
   bool renderIncremental();
   void drawWordHighlight(int index, int firstSelected, int lastSelected, int offsetX, int offset) const;
+  // The cursor's frame, drawn inside the word box so word redraws clear it.
+  void drawCursor(int index, int offsetX, int offset) const;
+  // The cursor frame's outer rect: the glyphs plus a margin, kept inside the
+  // line box and half the space to the neighbouring words.
+  Rect cursorRect(int index, int offsetX, int offset) const;
+  // Selected background for a word or gap at screen x/y (line top).
+  void fillSelected(int x, int y, int width, int height) const;
+  void drawHints(const MappedInputManager::Labels& labels) const;
   void drawWordClean(int index, int offsetX, int offset) const;
   void ditherGapBetween(const WordBox& a, const WordBox& b, int offsetX, int offset) const;
   void clearGapBetween(const WordBox& a, const WordBox& b, int offsetX, int offset) const;
   void prewarmWord(int index) const;
+  // Marks words inside saved clippings, except the one being edited.
+  void markSavedClippings();
+  // Selects saved clipping `index` for editing, if all of it is on these pages.
+  bool beginEdit(int index);
+  void endEdit();
+  int actionCount() const { return editing >= 0 ? 4 : 3; }
+  // Saved clippings on the current page, as the reader draws them.
+  void drawSavedClippings(int offsetX, int offset) const;
+  // A word's saved-clipping band after a redraw, joined to clipped neighbours.
+  void drawSavedBand(int index, int offsetX, int offset) const;
 
   std::vector<std::unique_ptr<Page>> pages;
   const int marginLeft;
@@ -83,6 +113,7 @@ class ClipSelectionActivity final : public Activity {
   const int initialX;
   const int initialY;
   const Mode mode;
+  const SavedClippings saved;
   OptionPopup actionPopup;
   // ponytail: retain 16 button frames during refresh; increase only if overflow is observed.
   std::array<uint8_t, 16> pendingButtons{};
@@ -94,6 +125,9 @@ class ClipSelectionActivity final : public Activity {
   size_t wordCount = 0;
   int selected = 0;
   int rangeStart = -1;
+  int editing = -1;  // saved clipping being edited
+  int editFirst = -1;
+  int editLast = -1;
   uint8_t currentPageOffset = 0;
   uint16_t rowCount = 0;
   bool touchDragSelecting = false;

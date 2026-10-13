@@ -85,6 +85,13 @@ void KOReaderSettingsActivity::activateIndex(const int index) {
                            });
   } else if (index == 3) {
     const auto current = KOREADER_STORE.getServerType();
+    if (UITheme::getInstance().getMetrics().settingsCycleValues) {
+      KOREADER_STORE.setServerType(
+          static_cast<KOReaderServerType>((static_cast<int>(current) + 1) % SERVER_TYPE_ITEMS));
+      KOREADER_STORE.saveToFile();
+      requestUpdate();
+      return;
+    }
     optionPopup.show(StrId::STR_SERVER_TYPE, serverTypeNames, SERVER_TYPE_ITEMS, static_cast<int>(current),
                      [this](const int selected) {
                        if (selected == static_cast<int>(KOREADER_STORE.getServerType())) return;

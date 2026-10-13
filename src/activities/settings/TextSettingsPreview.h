@@ -43,4 +43,10 @@ struct PreviewLayout {
 void renderPreview(const GfxRenderer& renderer, PreviewLayout& layout, int previewPadding, int labelGap, int top,
                    int height, const char* familyName, const char* sizeName);
 
+// Draws the preview where the reader draws its page text, down to bottom.
+void renderPagePreview(const GfxRenderer& renderer, PreviewLayout& layout, int bottom);
+
+// The key renderPagePreview lays out with under the current settings.
+PreviewKey pagePreviewKey(const GfxRenderer& renderer);
+
 }  // namespace textsettings

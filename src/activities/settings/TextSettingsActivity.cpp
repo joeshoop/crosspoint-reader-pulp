@@ -15,6 +15,7 @@
 #include "ReaderFontSizes.h"
 #include "SdCardFontSystem.h"
 #include "TextSettingsPreview.h"
+#include "components/GrayOverlay.h"
 #include "components/UITheme.h"
 #include "components/UIThemeTokens.h"
 #include "fontIds.h"
@@ -65,8 +66,13 @@ static_assert(std::size(WORD_SPACING_IDS) == (WORD_SPACING_MAX - WORD_SPACING_MI
 }  // namespace
 
 TextSettingsActivity::TextSettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
-                                           const SdCardFontRegistry* registry, Tab initialTab)
-    : UiTabListActivity("TextSettings", renderer, mappedInput), registry_(registry), tab_(initialTab) {}
+                                           const SdCardFontRegistry* registry, Tab initialTab, const int sheetTop,
+                                           std::function<void()> drawRunningHead)
+    : UiTabListActivity("TextSettings", renderer, mappedInput),
+      sheetTop_(sheetTop),
+      drawRunningHead_(std::move(drawRunningHead)),
+      registry_(registry),
+      tab_(initialTab) {}
 
 const char* TextSettingsActivity::tabLabel(const int index) const { return I18N.get(TAB_NAME_IDS[index]); }
 
@@ -106,6 +112,7 @@ void TextSettingsActivity::onEnter() {
   }
 
   rebuildRowItems();
+  if (inSheet()) entryKey_ = textsettings::pagePreviewKey(renderer);
 }
 
 bool TextSettingsActivity::usesSingleList() { return UITheme::getInstance().getMetrics().settingsSingleList; }
@@ -250,6 +257,11 @@ bool TextSettingsActivity::handleButtons() {
 }
 
 void TextSettingsActivity::buildScreen(UiScreen& screen) {
+  if (inSheet()) {
+    buildBottomSheet(screen, sheetTop_);
+    buildSingleList(screen);
+    return;
+  }
   // Content sits below the preview pane (render() draws header + preview
   // directly) and above the caption band + button hints.
   const int tabTop = afterHeader + previewHeight;
@@ -257,25 +269,8 @@ void TextSettingsActivity::buildScreen(UiScreen& screen) {
   screen.setContentMarginFromScreen(
       fui::Insets{static_cast<int16_t>(tabTop), 0, static_cast<int16_t>(bottomReserved + captionHeight), 0});
 
-  const bool singleList = usesSingleList();
-  if (singleList) {
-    const int count = listCount();
-    for (int i = 0; i < count; i++) {
-      rowValues_[i] = singleListValueText(i);
-      rowItems_[i].value = rowValues_[i].c_str();
-    }
-    fui::ListProps props;
-    props.items = rowItems_.data();
-    props.count = static_cast<uint16_t>(rowItems_.size());
-    props.action = ACTION_ROW;
-    props.inputMask = fui::InputTouch;  // physical buttons stay in loop()
-    props.labelText = screen.theme().bodyText;
-    props.labelText.maxLines = 1;
-    props.valueText = screen.theme().bodyText;
-    props.valueInset = 0;
-    applySectionHeadingStyle(screen.theme(), props);
-    syncTabListViewport(screen, props);
-    screen.list(props);
+  if (usesSingleList()) {
+    buildSingleList(screen);
     return;
   }
 
@@ -323,6 +318,34 @@ void TextSettingsActivity::buildScreen(UiScreen& screen) {
   screen.list(props);
 }
 
+void TextSettingsActivity::buildSingleList(UiScreen& screen) {
+  const int count = listCount();
+  for (int i = 0; i < count; i++) {
+    rowValues_[i] = singleListValueText(i);
+    rowItems_[i].value = rowValues_[i].c_str();
+  }
+  fui::ListProps props;
+  props.items = rowItems_.data();
+  props.count = static_cast<uint16_t>(rowItems_.size());
+  props.action = ACTION_ROW;
+  props.inputMask = fui::InputTouch;  // physical buttons stay in loop()
+  props.labelText = screen.theme().bodyText;
+  props.labelText.maxLines = 1;
+  props.valueText = screen.theme().bodyText;
+  props.valueInset = 0;
+  applySectionHeadingStyle(screen.theme(), props);
+  syncTabListViewport(screen, props);
+  screen.list(props);
+}
+
+int TextSettingsActivity::pageBandTop() const {
+  int top, right, bottom, left;
+  renderer.getOrientedViewableTRBL(&top, &right, &bottom, &left);
+  return top + UITheme::getStatusBarTopHeight(renderer);
+}
+
+int TextSettingsActivity::pageBandBottom() const { return sheetTop_ - kSheetShadow; }
+
 const char* TextSettingsActivity::confirmLabelText() const {
   if (usesSingleList()) return tr(STR_SELECT);
   if (ringPos() == 0) {
@@ -357,7 +380,7 @@ void TextSettingsActivity::drawChrome() {
 }
 
 void TextSettingsActivity::drawFooter() {
-  if (focusedRowHasNoPreview()) {
+  if (!inSheet() && focusedRowHasNoPreview()) {
     const int captionHeight = renderer.getTextHeight(UI_10_FONT_ID) + metrics_.verticalSpacing;
     const int capY = afterHeader + usableHeight - captionHeight + metrics_.verticalSpacing;
     renderer.drawText(UI_10_FONT_ID, metrics_.previewPadding, capY, tr(STR_NOT_IN_PREVIEW));
@@ -368,30 +391,62 @@ void TextSettingsActivity::drawFooter() {
 }
 
 void TextSettingsActivity::render(RenderLock&& lock) {
-  if (optionPopup_.processRender(renderer, mappedInput)) return;  // picker draws over everything
+  if (optionPopup_.processRender(renderer, mappedInput)) {
+    grayPreviewHash_ = 0;  // the picker repaints over the preview's grays
+    return;
+  }
+  if (inSheet()) {
+    renderSheet();
+    return;
+  }
   UiListActivity::render(std::move(lock));
-  if (SETTINGS.textAntiAliasing) renderPreviewGrayscale();
 }
 
-// Anti-aliasing as the reader draws it: gray planes for the preview text over
-// the 1-bit frame just displayed. Only the reader's 2-bit fonts add gray ink.
-void TextSettingsActivity::renderPreviewGrayscale() {
-  if (!renderer.storeBwBuffer()) return;
-  const GfxRenderer::RenderMode planes[2] = {GfxRenderer::GRAYSCALE_LSB, GfxRenderer::GRAYSCALE_MSB};
-  for (const auto mode : planes) {
-    renderer.clearScreen(0x00);
-    renderer.setRenderMode(mode);
+// No clearScreen: the framebuffer holds the reader's page, and the sheet
+// repaints its own area. Once a setting changes the text, the band above the
+// sheet shows the preview instead, laid out where the page was.
+void TextSettingsActivity::renderSheet() {
+  if (!pageEdited_ && textsettings::pagePreviewKey(renderer) != entryKey_) pageEdited_ = true;
+  if (pageEdited_) {
+    // From the screen top: the running head's height follows the font size too.
+    renderer.fillRect(0, 0, renderer.getScreenWidth(), pageBandBottom(), false);
+    if (drawRunningHead_) drawRunningHead_();
+    textsettings::renderPagePreview(renderer, previewLayout_, pageBandBottom());
+  }
+  renderSheetUi();
+}
+
+// Anti-aliasing as the reader draws it. The preview depends only on the
+// settings, so a row move leaves its pixels unchanged and the FAST
+// differential refresh keeps the grays already on the glass.
+void TextSettingsActivity::present() {
+  if (!SETTINGS.textAntiAliasing) {
+    // FAST would leave the old grays on the unchanged text.
+    renderer.displayBuffer(grayPreviewHash_ != 0 ? HalDisplay::HALF_REFRESH : HalDisplay::FAST_REFRESH);
+    grayPreviewHash_ = 0;
+    return;
+  }
+  // Sheet mode: the reader's own grays stay on the unchanged page.
+  if (inSheet() && !pageEdited_) {
+    renderer.displayBuffer();
+    return;
+  }
+  const int regionTop = inSheet() ? pageBandTop() : afterHeader;
+  const int regionHeight = inSheet() ? pageBandBottom() - pageBandTop() : previewHeight;
+  const uint32_t hash = renderer.regionHash(0, regionTop, renderer.getScreenWidth(), regionHeight);
+  if (hash != 0 && hash == grayPreviewHash_) {
+    renderer.displayBuffer();
+    return;
+  }
+  const bool grays = grayoverlay::present(renderer, HalDisplay::FAST_REFRESH, [this] {
+    if (inSheet()) {
+      textsettings::renderPagePreview(renderer, previewLayout_, pageBandBottom());
+      return;
+    }
     textsettings::renderPreview(renderer, previewLayout_, metrics_.previewPadding, metrics_.verticalSpacing,
                                 afterHeader, previewHeight, nullptr, nullptr);
-    if (mode == GfxRenderer::GRAYSCALE_LSB) {
-      renderer.copyGrayscaleLsbBuffers();
-    } else {
-      renderer.copyGrayscaleMsbBuffers();
-    }
-  }
-  renderer.displayGrayBuffer();
-  renderer.setRenderMode(GfxRenderer::BW);
-  renderer.restoreBwBuffer();
+  });
+  grayPreviewHash_ = grays ? hash : 0;
 }
 
 // Font switching runs on the main task from loop(), which deliberately holds no

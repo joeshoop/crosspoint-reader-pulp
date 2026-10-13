@@ -64,6 +64,8 @@ class UiListActivity : public Activity, protected UiAppHost {
   virtual void drawChrome();
   // Button hints, drawn after the app renders. Default: Back/Select/Up/Down.
   virtual void drawFooter();
+  // Pushes the finished frame to the panel. Default: a plain FAST refresh.
+  virtual void present() { renderer.displayBuffer(); }
 
   // --- helpers ---------------------------------------------------------------
   // Measure visibleRows for the screen band, apply follow-on-build, clamp the
@@ -74,6 +76,26 @@ class UiListActivity : public Activity, protected UiAppHost {
   void syncListViewport(UiScreen& screen, freeink::ui::ListProps& props, int selectionOffset = 0);
   // Move the selection to index and pull the viewport to it.
   void moveSelectionTo(int index);
+  // Button steps for lists with sections. A single press steps one row.
+  // A rapid second press in the same direction jumps to the start of the
+  // section the burst began in (Previous) or of the next section (Next); each
+  // further rapid press jumps one more section.
+  void stepRowsWithSectionJumps(int direction, int count);
+  // Holding a button repeats single-row steps, stopping at either end.
+  void holdStepRows(int direction, int count);
+  // Whether row (0-based) begins a section; row 0 always does.
+  virtual bool rowStartsSection(int row) const { return row == 0; }
+  // Selection index of row 0 (a tab bar takes the first entries).
+  virtual int rowSelectionOffset() const { return 0; }
+
+  // Bottom sheet for screens opened from the reader's menu sheet: same top
+  // edge (sheetTop) and shadow, and a foot band for the button hints. The
+  // rows lay out in what is left.
+  static constexpr int16_t kSheetShadow = 10;  // as the reader's menu sheet
+  void buildBottomSheet(UiScreen& screen, int sheetTop);
+  // render() for a bottom sheet: no clearScreen or header, so the page the
+  // reader left in the framebuffer stays above the sheet.
+  void renderSheetUi();
 
   // --- shared state ----------------------------------------------------------
   // Selection + viewport (selected/top/visibleRows/followOnBuild). Access via
@@ -89,4 +111,11 @@ class UiListActivity : public Activity, protected UiAppHost {
   bool routeListTouch();
 
   const bool wantsTouchLongPress;
+
+  // Rapid-press burst state for stepRowsWithSectionJumps.
+  static constexpr unsigned long kRapidPressMs = 200;
+  unsigned long lastStepMs = 0;
+  int burstDirection = 0;
+  int burstPresses = 0;
+  int burstOriginRow = 0;
 };

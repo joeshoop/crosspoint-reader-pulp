@@ -2049,6 +2049,22 @@ bool GfxRenderer::copyRegionToBuffer(int lx, int ly, int lw, int lh, uint8_t* bu
   return true;
 }
 
+uint32_t GfxRenderer::regionHash(int lx, int ly, int lw, int lh) const {
+  int x0, y0, x1, y1;
+  if (!frameBuffer ||
+      !logicalRectToPhysicalBounds(orientation, lx, ly, lw, lh, panelWidth, panelHeight, &x0, &y0, &x1, &y1)) {
+    return 0;
+  }
+  const int byteX0 = x0 / 8;
+  const int bytesPerRow = x1 / 8 - byteX0 + 1;
+  uint32_t hash = 2166136261u;
+  for (int row = y0; row <= y1; row++) {
+    const uint8_t* src = frameBuffer + row * panelWidthBytes + byteX0;
+    for (int i = 0; i < bytesPerRow; i++) hash = (hash ^ src[i]) * 16777619u;
+  }
+  return hash;
+}
+
 bool GfxRenderer::copyBufferToRegion(int lx, int ly, int lw, int lh, const uint8_t* buf, size_t bufSize) const {
   int x0, y0, x1, y1;
   if (!logicalRectToPhysicalBounds(orientation, lx, ly, lw, lh, panelWidth, panelHeight, &x0, &y0, &x1, &y1)) {

@@ -52,6 +52,7 @@
 #include "activities/settings/TextSettingsActivity.h"
 #include "clippings/ClippingText.h"
 #include "clippings/ClippingsManager.h"
+#include "components/icons/bookmark.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/BookmarkUtil.h"
@@ -367,11 +368,15 @@ void EpubReaderActivity::showBuildPopup(GfxRenderer& renderer, int& pagesUntilFu
   buildPopupPending = false;
 }
 
+void EpubReaderActivity::showNotice(const StrId text) {
+  noticeText = text;
+  noticePending = true;
+  noticeTime = millis();
+}
+
 void EpubReaderActivity::openDictionaryWordSelect() {
   if (SETTINGS.dictionaryName[0] == '\0') {
-    showDictionaryMessage = true;
-    dictionaryMessageTime = millis();
-    requestUpdate();
+    showNotice(StrId::STR_DICT_NO_DICT_SET);
     return;
   }
   startClipSelection(-1, -1, ClipSelectionActivity::Mode::Lookup);
@@ -390,19 +395,6 @@ void EpubReaderActivity::startClipSelection(const int initialX, const int initia
        ++pageOffset) {
     auto page = section->loadPage(pageNumber + pageOffset);
     if (!page) break;
-    if (pageOffset == 0 && initialX >= 0 && CLIPPINGS.hasClippings()) {
-      RenderLock lock;
-      const int clippingIndex = clippingAtPoint(*page, initialX, initialY);
-      if (clippingIndex >= 0) {
-        const bool removed = CLIPPINGS.removeClippingAt(static_cast<size_t>(clippingIndex));
-        if (!removed) LOG_ERR("CLIP", "Failed to delete highlighted clipping %d", clippingIndex);
-        clippingMessage = removed ? StrId::STR_CLIPPING_REMOVED : StrId::STR_CLIPPING_DELETE_FAILED;
-        showClippingMessage = true;
-        clippingMessageTime = millis();
-        requestUpdate();
-        return;
-      }
-    }
     pages.push_back(std::move(page));
   }
   if (pages.empty()) {
@@ -421,7 +413,7 @@ void EpubReaderActivity::startClipSelection(const int initialX, const int initia
 
   int marginTop, marginRight, marginBottom, marginLeft;
   renderer.getOrientedViewableTRBL(&marginTop, &marginRight, &marginBottom, &marginLeft);
-  marginTop += SETTINGS.screenMargin;
+  marginTop += SETTINGS.screenMargin + UITheme::getStatusBarTopHeight(renderer);
   marginLeft += SETTINGS.screenMargin;
 
   std::string chapterTitle;
@@ -430,8 +422,12 @@ void EpubReaderActivity::startClipSelection(const int initialX, const int initia
   std::string bookTitle = epub->getTitle();
   std::string author = epub->getAuthor();
 
+  ClipSelectionActivity::SavedClippings saved{spineIndex, static_cast<uint16_t>(pageNumber), pageCount,
+                                              layoutSignature, nullptr};
+  // A top running head stays put; a bottom status bar would sit under the hints.
+  if (UITheme::getStatusBarTopHeight(renderer) > 0) saved.drawRunningHead = [this] { renderStatusBar(); };
   auto activity = makeUniqueNoThrow<ClipSelectionActivity>(renderer, mappedInput, std::move(pages), marginLeft,
-                                                           marginTop, initialX, initialY, mode);
+                                                           marginTop, initialX, initialY, mode, std::move(saved));
   if (!activity) {
     LOG_ERR("CLIP", "Failed to allocate clipping selection activity");
     requestUpdate();
@@ -445,6 +441,13 @@ void EpubReaderActivity::startClipSelection(const int initialX, const int initia
       return;
     }
     const auto& clipping = std::get<ClippingResult>(result.data);
+    const int edited = clipping.editedClipping;
+    if (clipping.action == ClippingResult::Action::Remove) {
+      const bool removed = CLIPPINGS.removeClippingAt(static_cast<size_t>(edited));
+      if (!removed) LOG_ERR("CLIP", "Failed to delete highlighted clipping %d", edited);
+      showNotice(removed ? StrId::STR_CLIPPING_REMOVED : StrId::STR_CLIPPING_DELETE_FAILED);
+      return;
+    }
     const uint16_t startPage = static_cast<uint16_t>(pageNumber + clipping.startPageOffset);
     const uint16_t endPage = static_cast<uint16_t>(pageNumber + clipping.endPageOffset);
     if (section && currentSpineIndex == spineIndex && endPage < section->pageCount) {
@@ -453,9 +456,7 @@ void EpubReaderActivity::startClipSelection(const int initialX, const int initia
     }
     if (clipping.action == ClippingResult::Action::Bookmark) {
       addBookmark();
-      showBookmarkMessage = true;
-      bookmarkMessageTime = millis();
-      requestUpdate();
+      showNotice(bookmarkRemoved ? StrId::STR_BOOKMARK_REMOVED : StrId::STR_BOOKMARK_ADDED);
       return;
     }
     if (clipping.action == ClippingResult::Action::Lookup) {
@@ -469,7 +470,9 @@ void EpubReaderActivity::startClipSelection(const int initialX, const int initia
       renderer.getOrientedViewableTRBL(&top, &right, &bottom, &left);
       auto lookup = makeUniqueNoThrow<DictionaryWordSelectActivity>(renderer, mappedInput, std::move(page),
                                                                     left + SETTINGS.screenMargin,
-                                                                    top + SETTINGS.screenMargin, clipping.text);
+                                                                    top + SETTINGS.screenMargin +
+                                                                        UITheme::getStatusBarTopHeight(renderer),
+                                                                    clipping.text);
       if (!lookup) {
         LOG_ERR("CLIP", "OOM: dictionary lookup activity");
         requestUpdate();
@@ -480,20 +483,26 @@ void EpubReaderActivity::startClipSelection(const int initialX, const int initia
     }
     const uint16_t paragraphIndex =
         section ? section->getParagraphIndexForPage(startPage).value_or(UINT16_MAX) : UINT16_MAX;
+    // An edit replaces its clipping; at the limit, free its slot first.
+    bool replaced = false;
+    if (edited >= 0 && CLIPPINGS.clippingCount() >= CLIPPING_MAX_PER_BOOK) {
+      replaced = CLIPPINGS.removeClippingAt(static_cast<size_t>(edited));
+    }
     const auto addResult = CLIPPINGS.addClipping(
         spineIndex, startPage, endPage, pageCount, clipping.startWordIndex, clipping.endWordIndex, clipping.wordCount,
         chapterTitle.c_str(), paragraphIndex, clipping.text, layoutSignature, clipping.startOffset, clipping.endOffset);
+    if (addResult == ClippingStore::AddResult::Added && edited >= 0 && !replaced &&
+        !CLIPPINGS.removeClippingAt(static_cast<size_t>(edited))) {
+      LOG_ERR("CLIP", "Failed to remove edited clipping %d", edited);
+    }
     bool exported = false;
     if (addResult == ClippingStore::AddResult::Added) {
       exported = ClippingsManager::saveClipping(bookTitle, author, chapterTitle, startPage + 1, clipping.text);
     }
-    clippingMessage = addResult == ClippingStore::AddResult::LimitReached ? StrId::STR_CLIPPING_LIMIT_REACHED
-                      : exported                                          ? StrId::STR_CLIPPING_SAVED
-                      : addResult == ClippingStore::AddResult::Added      ? StrId::STR_CLIPPING_EXPORT_FAILED
-                                                                          : StrId::STR_CLIPPING_FAILED;
-    showClippingMessage = true;
-    clippingMessageTime = millis();
-    requestUpdate();
+    showNotice(addResult == ClippingStore::AddResult::LimitReached ? StrId::STR_CLIPPING_LIMIT_REACHED
+               : exported                                          ? StrId::STR_CLIPPING_SAVED
+               : addResult == ClippingStore::AddResult::Added      ? StrId::STR_CLIPPING_EXPORT_FAILED
+                                                                   : StrId::STR_CLIPPING_FAILED);
   });
 }
 
@@ -510,7 +519,7 @@ void EpubReaderActivity::openFootnoteSelect(const bool reopenMenuOnCancel) {
   int orientedMarginTop, orientedMarginRight, orientedMarginBottom, orientedMarginLeft;
   renderer.getOrientedViewableTRBL(&orientedMarginTop, &orientedMarginRight, &orientedMarginBottom,
                                    &orientedMarginLeft);
-  orientedMarginTop += SETTINGS.screenMargin;
+  orientedMarginTop += SETTINGS.screenMargin + UITheme::getStatusBarTopHeight(renderer);
   orientedMarginLeft += SETTINGS.screenMargin;
   auto selector = makeUniqueNoThrow<EpubReaderFootnoteSelectActivity>(renderer, mappedInput, std::move(page),
                                                                       orientedMarginLeft, orientedMarginTop);
@@ -658,13 +667,13 @@ void EpubReaderActivity::loop() {
   const auto touch =
       ReaderUtils::detectTouchPageTurn(renderer, mappedInput, ReaderUtils::isRtlBookLanguage(epub->getLanguage()));
 
-  if (showBookmarkMessage && (millis() - bookmarkMessageTime) >= ReaderUtils::BOOKMARK_MESSAGE_DURATION_MS) {
-    showBookmarkMessage = false;
+  if (noticePending && (millis() - noticeTime) >= kNoticeDelayMs) {
+    noticePending = false;
+    noticeShown = true;
+    noticeTime = millis();
     requestUpdate();
-  }
-
-  if (showDictionaryMessage && (millis() - dictionaryMessageTime) >= ReaderUtils::BOOKMARK_MESSAGE_DURATION_MS) {
-    showDictionaryMessage = false;
+  } else if (noticeShown && (millis() - noticeTime) >= ReaderUtils::BOOKMARK_MESSAGE_DURATION_MS) {
+    noticeShown = false;
     requestUpdate();
   }
 
@@ -737,11 +746,6 @@ void EpubReaderActivity::loop() {
     }
   }
 
-  if (showClippingMessage && (millis() - clippingMessageTime) >= ReaderUtils::BOOKMARK_MESSAGE_DURATION_MS) {
-    showClippingMessage = false;
-    requestUpdate();
-  }
-
   // While the end-of-book suggestion menu is up it owns Confirm/Back/navigation, so it
   // gets this tick's input first and the long-press shortcuts below stay inert behind it
   // -- a hold there must not drop a bookmark onto the suggestion screen or paint the
@@ -762,9 +766,7 @@ void EpubReaderActivity::loop() {
     switch (SETTINGS.longPressMenuFunction) {
       case CrossPointSettings::LP_MENU_BOOKMARK:
         addBookmark();
-        showBookmarkMessage = true;
-        bookmarkMessageTime = millis();
-        requestUpdate();
+        showNotice(bookmarkRemoved ? StrId::STR_BOOKMARK_REMOVED : StrId::STR_BOOKMARK_ADDED);
         break;
       case CrossPointSettings::LP_MENU_KOSYNC:
         if (launchKOReaderSync()) {
@@ -787,18 +789,16 @@ void EpubReaderActivity::loop() {
   if (!endOfBookMenuOpen) {
     switch (mappedInput.homeButtonAction()) {
       case HomeButtonAction::Bookmark:
-        if (!showBookmarkMessage) {
+        if (!noticePending && !noticeShown) {
           addBookmark();
-          showBookmarkMessage = true;
-          bookmarkMessageTime = millis();
-          requestUpdate();
+          showNotice(bookmarkRemoved ? StrId::STR_BOOKMARK_REMOVED : StrId::STR_BOOKMARK_ADDED);
         }
         return;
       case HomeButtonAction::Sync:
         launchKOReaderSync();
         return;
       case HomeButtonAction::Dictionary:
-        if (!showDictionaryMessage) openDictionaryWordSelect();
+        if ((!noticePending && !noticeShown) || noticeText != StrId::STR_DICT_NO_DICT_SET) openDictionaryWordSelect();
         return;
       case HomeButtonAction::CreateClipping:
         startClipSelection();
@@ -1065,8 +1065,10 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
         }
         section.reset();
       }
+      const int anchorY = contentsAnchorY;
+      contentsAnchorY = -1;
       startActivityForResult(
-          std::make_unique<EpubReaderChapterSelectionActivity>(renderer, mappedInput, epub, spineIdx),
+          std::make_unique<EpubReaderChapterSelectionActivity>(renderer, mappedInput, epub, spineIdx, anchorY),
           [this](const ActivityResult& result) {
             if (result.isCancelled) {
               openReaderMenu();
@@ -1088,8 +1090,11 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       break;
     }
     case EpubReaderMenuActivity::MenuAction::TEXT_SETTINGS: {
+      const int sheetTop = textSettingsSheetTop;
+      textSettingsSheetTop = -1;
       startActivityForResult(std::make_unique<TextSettingsActivity>(renderer, mappedInput, &sdFontSystem.registry(),
-                                                                    TextSettingsActivity::Tab::Family),
+                                                                    TextSettingsActivity::Tab::Family, sheetTop,
+                                                                    [this] { renderStatusBar(); }),
                              [this](const ActivityResult&) {
                                {
                                  RenderLock lock;
@@ -1501,7 +1506,9 @@ void EpubReaderActivity::renderBook() {
   int orientedMarginTop, orientedMarginRight, orientedMarginBottom, orientedMarginLeft;
   renderer.getOrientedViewableTRBL(&orientedMarginTop, &orientedMarginRight, &orientedMarginBottom,
                                    &orientedMarginLeft);
-  orientedMarginTop += SETTINGS.screenMargin;
+  // A status bar text line at the top sits above the margin, like a running head.
+  const int statusBarTopHeight = UITheme::getStatusBarTopHeight(renderer);
+  orientedMarginTop += SETTINGS.screenMargin + statusBarTopHeight;
   orientedMarginLeft += SETTINGS.screenMargin;
   orientedMarginRight += SETTINGS.screenMargin;
 
@@ -1513,7 +1520,9 @@ void EpubReaderActivity::renderBook() {
         std::max(SETTINGS.screenMargin,
                  static_cast<uint8_t>(statusBarHeight + UITheme::getInstance().getMetrics().statusBarVerticalMargin));
   } else {
-    orientedMarginBottom += std::max(SETTINGS.screenMargin, statusBarHeight);
+    // With the text line at the top, only a progress bar is left down here.
+    const int bottomBar = statusBarTopHeight > 0 ? UITheme::getProgressBarHeight() : statusBarHeight;
+    orientedMarginBottom += std::max<int>(SETTINGS.screenMargin, bottomBar);
   }
 
   const uint16_t viewportWidth = renderer.getScreenWidth() - orientedMarginLeft - orientedMarginRight;
@@ -1795,16 +1804,9 @@ void EpubReaderActivity::renderBook() {
     ScreenshotUtil::takeScreenshot(renderer);
   }
 
-  if (showBookmarkMessage) {
-    GUI.drawPopup(renderer, bookmarkRemoved ? tr(STR_BOOKMARK_REMOVED) : tr(STR_BOOKMARK_ADDED));
-  }
-
-  if (showDictionaryMessage) {
-    GUI.drawPopup(renderer, tr(STR_DICT_NO_DICT_SET));
-  }
-
-  if (showClippingMessage) {
-    GUI.drawPopup(renderer, I18N.get(clippingMessage));
+  // A top running head shows it in place of the title (renderStatusBar).
+  if (noticeShown && UITheme::getStatusBarTopHeight(renderer) == 0) {
+    GUI.drawPopup(renderer, I18N.get(noticeText));
   }
 
   pageBufferStale = false;  // the page is back in the framebuffer
@@ -1908,6 +1910,15 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   renderStatusBar();
   scope.endScanAndPrewarm();
   const auto tPrewarm = millis();
+
+  // Under a toolbar overlay (back from Contents, say) the caller draws the
+  // overlay and pushes page and overlay in one refresh: no bare-page frame.
+  if (overlay != Overlay::None && usesToolbarMenu()) {
+    drawClippingHighlights(*page, fontId, orientedMarginTop, orientedMarginLeft);
+    page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop);
+    renderStatusBar();
+    return;
+  }
 
   const bool pageHasImages = page->hasImages();
   const bool pageHasImagesNeedingDecode = pageHasImages && page->hasImagesNeedingDecode();
@@ -2138,39 +2149,6 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   }
 }
 
-int EpubReaderActivity::clippingAtPoint(const Page& page, const int x, const int y) const {
-  int top, right, bottom, left;
-  renderer.getOrientedViewableTRBL(&top, &right, &bottom, &left);
-  const int fontId = SETTINGS.getReaderFontId();
-  const uint32_t signature =
-      readerRenderSpecSignature(SETTINGS.readerRenderSpec(buildViewportWidth, buildViewportHeight));
-  uint16_t wordIndex = 0;
-  for (const auto& element : page.elements) {
-    if (element->getTag() != TAG_PageLine) continue;
-    const auto& line = static_cast<const PageLine&>(*element);
-    const auto& block = line.getBlock();
-    if (!block || !block->valid()) continue;
-    for (uint16_t i = 0; i < block->wordCount(); ++i) {
-      const char* text = block->wordText(i);
-      if (!clippingText::hasVisibleText(text)) continue;
-      const auto style = static_cast<EpdFontFamily::Style>(block->wordStyle(i) & ~EpdFontFamily::UNDERLINE);
-      const int width = renderer.getTextAdvanceX(fontId, text, style, block->getBlockStyle().characterSpacing);
-      if (width <= 0) continue;
-      const uint16_t index = wordIndex++;
-      const Rect rect =
-          clippingWordRect(renderer, fontId, line, i, top + SETTINGS.screenMargin, left + SETTINGS.screenMargin, width);
-      if (x < rect.x || x >= rect.x + rect.width || y < rect.y || y >= rect.y + rect.height) continue;
-      const auto range = block->wordSourceRange(i);
-      for (size_t j = 0; j < CLIPPINGS.clippingCount(); ++j) {
-        if (clippingContainsWord(*CLIPPINGS.clippingAt(j), currentSpineIndex, section->currentPage, section->pageCount,
-                                 signature, index, range.start, range.end))
-          return static_cast<int>(j);
-      }
-    }
-  }
-  return -1;
-}
-
 void EpubReaderActivity::drawClippingHighlights(const Page& page, const int fontId, const int orientedMarginTop,
                                                 const int orientedMarginLeft) const {
   if (!section || !CLIPPINGS.hasClippings() || section->currentPage < 0 || section->currentPage >= section->pageCount) {
@@ -2210,9 +2188,27 @@ void EpubReaderActivity::drawClippingHighlights(const Page& page, const int font
     }
   };
 
+  // Themes with a highlighter pen mark each line's run of clipped words with
+  // one stroke; the A4 gray planes keep the plain fill.
+  const bool usePen = !(BoardConfig::isEegoA4() && renderer.getRenderMode() != GfxRenderer::BW);
+  const int lineHeight = renderer.getLineHeight(fontId);
+  int spanLeft = 0;
+  int spanRight = -1;  // < spanLeft: no open run
+  int spanTop = 0;
+  const auto flushSpan = [&]() {
+    if (spanRight < spanLeft) return;
+    const int lineTop = spanTop;
+    if (!usePen || !GUI.drawTextHighlighter(renderer, spanLeft, lineTop, spanRight - spanLeft, lineHeight,
+                                             static_cast<uint32_t>(spanLeft * 7919 + lineTop * 104729))) {
+      fillHighlight(spanLeft, lineTop, spanRight - spanLeft, lineHeight);
+    }
+    spanRight = spanLeft - 1;
+  };
+
   uint16_t pageWordIndex = 0;
   for (const auto& element : page.elements) {
     if (element->getTag() != TAG_PageLine) continue;
+    flushSpan();
     const auto& line = static_cast<const PageLine&>(*element);
     const auto& block = line.getBlock();
     if (!block || !block->valid()) continue;
@@ -2228,6 +2224,7 @@ void EpubReaderActivity::drawClippingHighlights(const Page& page, const int font
       const uint16_t wordIndex = pageWordIndex++;
       if (!isHighlighted(wordIndex, block->wordSourceRange(i))) {
         hasPreviousHighlight = false;
+        flushSpan();
         continue;
       }
 
@@ -2235,7 +2232,17 @@ void EpubReaderActivity::drawClippingHighlights(const Page& page, const int font
       const int x = rect.x;
       const int y = rect.y;
       width = rect.width;
-      if (width > 0) {
+      if (usePen && width > 0) {
+        if (spanRight < spanLeft) {
+          spanLeft = x;
+          spanRight = x + width;
+          spanTop = y;
+        } else {
+          spanLeft = std::min(spanLeft, x);
+          spanRight = std::max(spanRight, x + width);
+        }
+        ++highlightedWords;
+      } else if (width > 0) {
         const int highlightRight = x + width;
         const int previousHighlightRight = previousHighlightX + previousHighlightWidth;
         if (hasPreviousHighlight && previousHighlightRight < x) {
@@ -2253,6 +2260,7 @@ void EpubReaderActivity::drawClippingHighlights(const Page& page, const int font
       }
     }
   }
+  flushSpan();
   LOG_DBG("CLIP", "Highlight pass: chapter_clips=%u highlighted_words=%u time=%lums",
           static_cast<unsigned>(chapterClippings), static_cast<unsigned>(highlightedWords), millis() - started);
 }
@@ -2266,8 +2274,11 @@ void EpubReaderActivity::renderStatusBar() const {
   std::string title;
   int textYOffset = 0;
   const auto sb = SETTINGS.statusBarSpec();
+  const bool runningHead = UITheme::getStatusBarTopHeight(renderer) > 0;
 
-  if (automaticPageTurnActive) {
+  if (runningHead && noticeShown) {
+    title = I18N.get(noticeText);
+  } else if (automaticPageTurnActive) {
     title = tr(STR_AUTO_TURN_ENABLED) + std::to_string(60 * 1000 / pageTurnDuration);
     const uint8_t statusBarHeight = UITheme::getInstance().getStatusBarHeight();
     if (statusBarHeight == 0 || statusBarHeight == UITheme::getInstance().getProgressBarHeight()) {
@@ -2287,7 +2298,7 @@ void EpubReaderActivity::renderStatusBar() const {
   }
 
   GUI.drawStatusBar(renderer, bookProgress, currentPage, pageCount, title, 0, textYOffset, true, currentPageBookmarked,
-                    section ? section->isBuilding() : false);
+                    section ? section->isBuilding() : false, runningHead);
 }
 
 // ---------------------------------------------------------------------------
@@ -2302,7 +2313,8 @@ constexpr StrId kAlignIds[] = {StrId::STR_JUSTIFY, StrId::STR_ALIGN_LEFT, StrId:
                                StrId::STR_BOOK_S_STYLE};
 constexpr int kTextRowCount = static_cast<int>(std::size(kTextRowNames));
 // Menu sheet: the shared sheet items plus a closing More row.
-constexpr int kMenuSheetRowCount = static_cast<int>(std::size(EpubReaderMenuActivity::kSheetItems)) + 1;
+// The menu sheet lists kSheetItems, then the rest of the menu (moreItems) below them.
+constexpr int kSheetItemCount = static_cast<int>(std::size(EpubReaderMenuActivity::kSheetItems));
 static_assert(std::size(kSpacingIds) == CrossPointSettings::LINE_COMPRESSION_COUNT, "line spacing labels");
 static_assert(std::size(kAlignIds) == CrossPointSettings::PARAGRAPH_ALIGNMENT_COUNT, "alignment labels");
 }  // namespace
@@ -2455,6 +2467,7 @@ void EpubReaderActivity::openOverlay(Overlay target) {
       break;
     case Overlay::Menu:
       panelIndex = 0;
+      buildMoreActions();
       toolbarUi->nav().reset();
       break;
     default:
@@ -2556,29 +2569,39 @@ void EpubReaderActivity::renderOverlay() {
   // tapped row does not stay inverted after its action.
   model.selectedIndex = panelCursorShown ? panelIndex : -1;
   if (overlay == Overlay::Menu) {
+    // The chapter row opens Contents, which lines this chapter up with it.
     chapterTitle = currentChapterTitle();
-    const int pageCount = section->estimatedTotalPages();
-    const float chapterProgress =
-        pageCount > 0 ? static_cast<float>(section->currentPage + 1) / static_cast<float>(pageCount) : 0.0f;
-    const float bookProgress = epub->calculateProgress(currentSpineIndex, chapterProgress);
-    const int pagesLeft = std::max(0, pageCount - (section->currentPage + 1));
-    char progress[48];
-    if (pagesLeft == 0) {
-      snprintf(progress, sizeof(progress), "%s", tr(STR_LAST_PAGE_IN_CHAPTER));
-    } else if (pagesLeft == 1) {
-      snprintf(progress, sizeof(progress), "%s", tr(STR_ONE_PAGE_LEFT_IN_CHAPTER));
-    } else {
-      snprintf(progress, sizeof(progress), tr(STR_PAGES_LEFT_IN_CHAPTER), pagesLeft);
-    }
-    pageInfo = progress;
     model.menuSheet = true;
     model.sheetTitle = epub->getTitle().c_str();
-    model.panelTitle = chapterTitle.c_str();
-    model.panelSubtitle = pageInfo.c_str();
-    model.itemCount = kMenuSheetRowCount;
-    model.rowText = [](int i) {
-      return std::string(i < kMenuSheetRowCount - 1 ? I18N.get(EpubReaderMenuActivity::kSheetItems[i].labelId)
-                                                    : tr(STR_TOOL_MORE));
+    model.itemCount = kSheetItemCount + static_cast<int>(moreItems.size());
+    model.rowText = [this, &chapterTitle](int i) {
+      using MA = EpubReaderMenuActivity::MenuAction;
+      if (i >= kSheetItemCount) return moreRowName(i - kSheetItemCount);
+      if (EpubReaderMenuActivity::kSheetItems[i].action == MA::SELECT_CHAPTER) return chapterTitle;
+      if (EpubReaderMenuActivity::kSheetItems[i].action == MA::TOGGLE_BOOKMARK) {
+        return std::string(currentPageBookmarked ? tr(STR_REMOVE_BOOKMARK) : tr(STR_ADD_BOOKMARK));
+      }
+      return std::string(I18N.get(EpubReaderMenuActivity::kSheetItems[i].labelId));
+    };
+    // Values as the single-list Settings rows show them.
+    model.rowValue = [this](int i) {
+      using MA = EpubReaderMenuActivity::MenuAction;
+      if (i < kSheetItemCount) return std::string();
+      const auto action = moreItems[i - kSheetItemCount].action;
+      if (action == MA::NIGHT_MODE || action == MA::FRONTLIGHT) {
+        const bool on = action == MA::NIGHT_MODE ? SETTINGS.screenInverted != 0 : Frontlight.isOn();
+        return std::string(on ? tr(STR_STATE_ON) : tr(STR_STATE_OFF));
+      }
+      return moreRowValue(i - kSheetItemCount);
+    };
+    // A bookmarked page shows the bookmark in the row's value slot; nothing otherwise.
+    model.rowCheckboxContext = this;
+    model.rowCheckbox = [](void* ctx, int i, freeink::ui::ListItem& item) {
+      if (i >= kSheetItemCount || !static_cast<EpubReaderActivity*>(ctx)->currentPageBookmarked ||
+          EpubReaderMenuActivity::kSheetItems[i].action != EpubReaderMenuActivity::MenuAction::TOGGLE_BOOKMARK) {
+        return;
+      }
+      item.valueIcon = freeink::ui::BitmapRef{BookmarkStatusIcon, 16, 16};
     };
   } else if (overlay == Overlay::Contents) {
     model.panelTitle = tr(STR_TOOL_CONTENTS);
@@ -2612,6 +2635,11 @@ void EpubReaderActivity::renderOverlay() {
   }
   toolbarUi->setModel(model);
   toolbarUi->render();
+  if (model.menuSheet) {
+    // The sheet leaves a band at its foot for these (ReaderToolbarUi::buildMenuSheet).
+    const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  }
 }
 
 void EpubReaderActivity::handleOverlayInput() {
@@ -2725,7 +2753,7 @@ void EpubReaderActivity::handleOverlayInput() {
   // --- Panels (Contents / Text / More) ---
   const int count = overlay == Overlay::Contents ? epub->getTocItemsCount()
                     : overlay == Overlay::Text   ? kTextRowCount
-                    : overlay == Overlay::Menu   ? kMenuSheetRowCount
+                    : overlay == Overlay::Menu   ? kSheetItemCount + static_cast<int>(moreItems.size())
                                                  : static_cast<int>(moreItems.size());
   const int pageRows = std::max(1, toolbarUi->visibleRows());
 
@@ -2932,13 +2960,22 @@ void EpubReaderActivity::applyReaderTextSettings() {
 }
 
 // The More panel carries everything the classic list menu offers except the
-// two entries that have their own tool (chapters -> Contents, text -> Text).
+// two entries that have their own tool (chapters -> Contents, text -> Text),
+// or, under the menu sheet, the entries the sheet already lists.
 void EpubReaderActivity::buildMoreActions() {
   using MA = EpubReaderMenuActivity::MenuAction;
   EpubReaderMenuActivity::buildMenuItems(moreItems, !currentPageFootnotes.empty(), !cachedBookmarks.empty(),
                                          CLIPPINGS.hasClippings());
+  const bool sheet = usesMenuSheet();
   moreItems.erase(std::remove_if(moreItems.begin(), moreItems.end(),
-                                 [](const auto& item) {
+                                 [sheet](const auto& item) {
+                                   if (sheet) {
+                                     if (item.action == MA::GO_HOME) return true;
+                                     for (const auto& sheetItem : EpubReaderMenuActivity::kSheetItems) {
+                                       if (item.action == sheetItem.action) return true;
+                                     }
+                                     return false;
+                                   }
                                    return item.action == MA::SELECT_CHAPTER || item.action == MA::TEXT_SETTINGS;
                                  }),
                   moreItems.end());
@@ -3028,30 +3065,37 @@ void EpubReaderActivity::activateMoreRow(int row) {
 }
 
 void EpubReaderActivity::activateMenuSheetRow(const int row) {
-  if (row < 0 || row >= kMenuSheetRowCount) return;
+  if (row >= kSheetItemCount) {
+    activateMoreRow(row - kSheetItemCount);
+    return;
+  }
+  if (row < 0) return;
   {
     RenderLock lock;  // the actions launch screens that paint the framebuffer
     settleOverlayRefresh();
   }
-  if (row < kMenuSheetRowCount - 1) {
-    runLeafMenuAction(EpubReaderMenuActivity::kSheetItems[row].action);
-    return;
+  const auto action = EpubReaderMenuActivity::kSheetItems[row].action;
+  if (toolbarUi && action == EpubReaderMenuActivity::MenuAction::SELECT_CHAPTER) {
+    // Only while the sheet is scrolled to the top does the row's y follow from its index.
+    contentsAnchorY = toolbarUi->menuSheetTopRow() == 0
+                          ? toolbarUi->menuSheetFirstRowY() + row * UITheme::getInstance().getMetrics().listRowHeight
+                          : -1;
   }
-  // More: the full-screen menu, holding the items the sheet leaves out.
-  overlay = Overlay::None;
-  discardOverlayPage();
-  toolbarUi.reset();
-  openListMenu();
+  if (toolbarUi && action == EpubReaderMenuActivity::MenuAction::TEXT_SETTINGS) {
+    textSettingsSheetTop = toolbarUi->menuSheetTop();
+  }
+  runLeafMenuAction(action);
 }
 
 void EpubReaderActivity::runLeafMenuAction(const EpubReaderMenuActivity::MenuAction action) {
   using MA = EpubReaderMenuActivity::MenuAction;
   // Leaf actions open their own screen / perform the action; close the overlay first.
   overlay = Overlay::None;
-  if (action == MA::GO_TO_PERCENT && overlayPageStored) {
-    // The percent dialog is a popup over the current frame: wipe the toolbar
-    // chrome back to the clean page first so the dialog draws over the page,
-    // not the sheet. No refresh push — the dialog's first frame carries it.
+  const bool overPage = action == MA::GO_TO_PERCENT || (action == MA::TEXT_SETTINGS && textSettingsSheetTop >= 0);
+  if (overPage && overlayPageStored) {
+    // The percent dialog and the Text Settings sheet draw over the current
+    // frame: wipe the toolbar chrome back to the clean page first so they draw
+    // over the page, not the sheet. No refresh push — their first frame carries it.
     RenderLock lock;
     settleOverlayRefresh();
     renderer.restoreBwBuffer(/*resyncPanelBaseline=*/false);
@@ -3063,9 +3107,7 @@ void EpubReaderActivity::runLeafMenuAction(const EpubReaderMenuActivity::MenuAct
     // No child activity here to trigger the re-render the list menu relies on:
     // show the same confirmation popup the long-press path does.
     addBookmark();
-    showBookmarkMessage = true;
-    bookmarkMessageTime = millis();
-    requestUpdate();
+    showNotice(bookmarkRemoved ? StrId::STR_BOOKMARK_REMOVED : StrId::STR_BOOKMARK_ADDED);
     return;
   }
   onReaderMenuConfirm(action);

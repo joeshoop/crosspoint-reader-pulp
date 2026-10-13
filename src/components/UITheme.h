@@ -46,6 +46,10 @@ class UITheme {
   static UIIcon getFileIcon(const std::string& filename);
   static int getStatusBarHeight();
   static int getProgressBarHeight();
+  // Height the reader keeps above the page for the status bar's text line:
+  // padding, a reader-font line, padding. 0 unless the theme puts it at the top.
+  static int getStatusBarTopHeight(const GfxRenderer& renderer);
+  static constexpr int kStatusBarTopPadding = 10;
 
  private:
   BaseTheme fallbackTheme;

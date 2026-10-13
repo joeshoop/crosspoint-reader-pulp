@@ -78,5 +78,6 @@ class ReaderActivity : public Activity {
   void render(RenderLock&& lock) override;
 
   bool isReaderActivity() const final { return true; }
+  bool wantsFadingFix() const override { return true; }
   bool handleForcedRefresh() final;
 };

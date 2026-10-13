@@ -42,10 +42,9 @@ class EpubReaderMenuActivity final : public UiListActivity {
   // The menu sheet's rows (readerMenuSheet themes), followed by a More row
   // that opens this screen with the remaining items.
   static constexpr MenuItem kSheetItems[] = {{MenuAction::SELECT_CHAPTER, StrId::STR_TOOL_CONTENTS},
+                                             {MenuAction::TOGGLE_BOOKMARK, StrId::STR_BOOKMARK_OPTION},
                                              {MenuAction::TEXT_SETTINGS, StrId::STR_TEXT_SETTINGS},
-                                             {MenuAction::TOGGLE_BOOKMARK, StrId::STR_TOGGLE_BOOKMARK},
-                                             {MenuAction::GO_TO_PERCENT, StrId::STR_GO_TO_PERCENT},
-                                             {MenuAction::GO_HOME, StrId::STR_GO_HOME_BUTTON}};
+                                             {MenuAction::SAVE_CLIPPING, StrId::STR_SAVE_CLIPPING}};
 
   explicit EpubReaderMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const std::string& title,
                                   const int currentPage, const int totalPages, const int bookProgressPercent,

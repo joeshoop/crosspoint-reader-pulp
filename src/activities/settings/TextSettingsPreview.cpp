@@ -16,6 +16,7 @@
 
 #include "CrossPointSettings.h"
 #include "ReaderExcerpt.h"
+#include "components/UITheme.h"
 #include "fontIds.h"
 
 namespace textsettings {
@@ -96,6 +97,82 @@ void relayout(PreviewLayout& layout, const GfxRenderer& renderer, int fontId, in
   }
 }
 
+PreviewKey keyFor(const int fontId, const int textWidth) {
+  return PreviewKey{.fontId = fontId,
+                    .fontPointSize = SETTINGS.fontPointSize,
+                    .screenMargin = SETTINGS.screenMargin,
+                    .textWidth = textWidth,
+                    .lineCompression = SETTINGS.getReaderLineCompression(),
+                    .alignment = SETTINGS.paragraphAlignment,
+                    .extraParagraphSpacing = SETTINGS.extraParagraphSpacing != 0,
+                    .paragraphIndentSpaces = SETTINGS.paragraphIndentSpaces,
+                    .characterSpacing = SETTINGS.getCharacterSpacing(),
+                    .wordSpacingPercent = SETTINGS.wordSpacing,
+                    .focusReading = SETTINGS.focusReadingEnabled != 0,
+                    .hyphenation = SETTINGS.hyphenationEnabled != 0,
+                    .excerptGeneration = readerexcerpt::current().generation};
+}
+
+// Lays out (when the key changed) and draws the preview lines from y down to bottomLimit.
+void drawLines(const GfxRenderer& renderer, PreviewLayout& layout, const int fontId, const int textLeft,
+               const int textWidth, int y, const int bottomLimit) {
+  const int lineH = renderer.getTextHeight(fontId);
+  if (lineH <= 0) return;
+
+  const float compression = SETTINGS.getReaderLineCompression();
+  const int lineAdvance = std::max(1, renderer.getLineHeight(fontId, compression));
+  const int paragraphGap = SETTINGS.extraParagraphSpacing ? lineAdvance / 2 : 0;
+
+  // Re-lay-out (and re-prewarm glyphs) only when a layout-affecting setting or the
+  // geometry changed; else reuse the cache. The prewarm inputs are (fontId, constant
+  // sample text, styleMask<-focusReading), all of which are key fields, so a matching
+  // key means an identical prewarm call. This relies on nothing else evicting the SD
+  // glyph cache while this activity is up — true today: the only evictor is
+  // FontCacheManager::PrewarmScope, used solely by the reader/dictionary activities.
+  const PreviewKey key = keyFor(fontId, textWidth);
+  if (key != layout.key) {
+    if (auto* fcm = renderer.getFontCacheManager()) {
+      fcm->prewarmCache(fontId, previewText(), SETTINGS.focusReadingEnabled ? 0x03 : 0x01);
+    }
+    relayout(layout, renderer, fontId, textWidth);
+    layout.key = key;
+  }
+
+  if (layout.fromBook) {
+    for (size_t i = 0; i < layout.lines.size(); i++) {
+      if (y + lineH > bottomLimit) return;
+      layout.lines[i]->render(renderer, fontId, textLeft, y);
+      y += lineAdvance + (layout.paragraphEnds[i] ? paragraphGap : 0);
+    }
+    return;
+  }
+
+  // Draw the sample twice so the paragraph gap is visible
+  for (int paragraph = 0; paragraph < 2; paragraph++) {
+    for (const auto& line : layout.lines) {
+      if (y + lineH > bottomLimit) return;
+      line->render(renderer, fontId, textLeft, y);
+      y += lineAdvance;
+    }
+    y += paragraphGap;
+  }
+}
+
+// The reader's text box: left edge, width and first-line top.
+struct PageBox {
+  int left;
+  int width;
+  int top;
+};
+
+PageBox pageBox(const GfxRenderer& renderer) {
+  int top, right, bottom, left;
+  renderer.getOrientedViewableTRBL(&top, &right, &bottom, &left);
+  return PageBox{left + SETTINGS.screenMargin,
+                 renderer.getScreenWidth() - left - right - 2 * SETTINGS.screenMargin,
+                 top + SETTINGS.screenMargin + UITheme::getStatusBarTopHeight(renderer)};
+}
+
 }  // namespace
 
 void renderPreview(const GfxRenderer& renderer, PreviewLayout& layout, int previewPadding, int labelGap, int top,
@@ -119,64 +196,22 @@ void renderPreview(const GfxRenderer& renderer, PreviewLayout& layout, int previ
   const int fontId = SETTINGS.getReaderFontId();
   if (fontId == 0) return;
 
-  const int lineH = renderer.getTextHeight(fontId);
-  if (lineH <= 0) return;
-
   const int textLeft = left + SETTINGS.screenMargin;
   const int textWidth = width - 2 * SETTINGS.screenMargin;
   if (textWidth <= 0) return;
 
-  const float compression = SETTINGS.getReaderLineCompression();
-  const int lineAdvance = std::max(1, renderer.getLineHeight(fontId, compression));
-  const int paragraphGap = SETTINGS.extraParagraphSpacing ? lineAdvance / 2 : 0;
+  drawLines(renderer, layout, fontId, textLeft, textWidth, top + previewPadding, top + height - labelReserved);
+}
 
-  // Re-lay-out (and re-prewarm glyphs) only when a layout-affecting setting or the
-  // geometry changed; else reuse the cache. The prewarm inputs are (fontId, constant
-  // sample text, styleMask<-focusReading), all of which are key fields, so a matching
-  // key means an identical prewarm call. This relies on nothing else evicting the SD
-  // glyph cache while this activity is up — true today: the only evictor is
-  // FontCacheManager::PrewarmScope, used solely by the reader/dictionary activities.
-  const PreviewKey key{.fontId = fontId,
-                       .fontPointSize = SETTINGS.fontPointSize,
-                       .screenMargin = SETTINGS.screenMargin,
-                       .textWidth = textWidth,
-                       .lineCompression = compression,
-                       .alignment = SETTINGS.paragraphAlignment,
-                       .extraParagraphSpacing = SETTINGS.extraParagraphSpacing != 0,
-                       .paragraphIndentSpaces = SETTINGS.paragraphIndentSpaces,
-                       .characterSpacing = SETTINGS.getCharacterSpacing(),
-                       .wordSpacingPercent = SETTINGS.wordSpacing,
-                       .focusReading = SETTINGS.focusReadingEnabled != 0,
-                       .hyphenation = SETTINGS.hyphenationEnabled != 0,
-                       .excerptGeneration = readerexcerpt::current().generation};
-  if (key != layout.key) {
-    if (auto* fcm = renderer.getFontCacheManager()) {
-      fcm->prewarmCache(fontId, previewText(), SETTINGS.focusReadingEnabled ? 0x03 : 0x01);
-    }
-    relayout(layout, renderer, fontId, textWidth);
-    layout.key = key;
-  }
+void renderPagePreview(const GfxRenderer& renderer, PreviewLayout& layout, const int bottom) {
+  const int fontId = SETTINGS.getReaderFontId();
+  const PageBox box = pageBox(renderer);
+  if (fontId == 0 || box.width <= 0) return;
+  drawLines(renderer, layout, fontId, box.left, box.width, box.top, bottom);
+}
 
-  int y = top + previewPadding;
-  const int textBottomLimit = top + height - labelReserved;
-  if (layout.fromBook) {
-    for (size_t i = 0; i < layout.lines.size(); i++) {
-      if (y + lineH > textBottomLimit) return;
-      layout.lines[i]->render(renderer, fontId, textLeft, y);
-      y += lineAdvance + (layout.paragraphEnds[i] ? paragraphGap : 0);
-    }
-    return;
-  }
-
-  // Draw the sample twice so the paragraph gap is visible
-  for (int paragraph = 0; paragraph < 2; paragraph++) {
-    for (const auto& line : layout.lines) {
-      if (y + lineH > textBottomLimit) return;
-      line->render(renderer, fontId, textLeft, y);
-      y += lineAdvance;
-    }
-    y += paragraphGap;
-  }
+PreviewKey pagePreviewKey(const GfxRenderer& renderer) {
+  return keyFor(SETTINGS.getReaderFontId(), pageBox(renderer).width);
 }
 
 }  // namespace textsettings

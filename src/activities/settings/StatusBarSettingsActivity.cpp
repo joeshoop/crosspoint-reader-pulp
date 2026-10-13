@@ -116,6 +116,21 @@ void StatusBarSettingsActivity::activateIndex(const int index) {
   requestUpdate();
 }
 
+// Opens the picker, or steps to the next value in place when the theme
+// avoids pickers. value is a SETTINGS field, so it outlives the popup.
+void StatusBarSettingsActivity::chooseValue(const StrId title, const StrId* names, const int count,
+                                            uint8_t& value) {
+  if (UITheme::getInstance().getMetrics().settingsCycleValues) {
+    value = static_cast<uint8_t>((value + 1) % count);
+    SETTINGS.saveToFile();
+    return;
+  }
+  optionPopup.show(title, names, count, value, [&value](int idx) {
+    value = static_cast<uint8_t>(idx);
+    SETTINGS.saveToFile();
+  });
+}
+
 void StatusBarSettingsActivity::handleSelection() {
   switch (nav.selected) {
     case ITEM_CHAPTER_PAGE_COUNT:
@@ -125,34 +140,20 @@ void StatusBarSettingsActivity::handleSelection() {
       SETTINGS.statusBarBookProgressPercentage = (SETTINGS.statusBarBookProgressPercentage + 1) % 2;
       break;
     case ITEM_PROGRESS_BAR:
-      optionPopup.show(StrId::STR_PROGRESS_BAR, progressBarNames, PROGRESS_BAR_ITEMS, SETTINGS.statusBarProgressBar,
-                       [this](int idx) {
-                         SETTINGS.statusBarProgressBar = idx;
-                         SETTINGS.saveToFile();
-                       });
+      chooseValue(StrId::STR_PROGRESS_BAR, progressBarNames, PROGRESS_BAR_ITEMS, SETTINGS.statusBarProgressBar);
       return;
     case ITEM_PROGRESS_BAR_THICKNESS:
-      optionPopup.show(StrId::STR_PROGRESS_BAR_THICKNESS, progressBarThicknessNames, PROGRESS_BAR_THICKNESS_ITEMS,
-                       SETTINGS.statusBarProgressBarThickness, [this](int idx) {
-                         SETTINGS.statusBarProgressBarThickness = idx;
-                         SETTINGS.saveToFile();
-                       });
+      chooseValue(StrId::STR_PROGRESS_BAR_THICKNESS, progressBarThicknessNames, PROGRESS_BAR_THICKNESS_ITEMS,
+                  SETTINGS.statusBarProgressBarThickness);
       return;
     case ITEM_TITLE:
-      optionPopup.show(StrId::STR_TITLE, titleNames, TITLE_ITEMS, SETTINGS.statusBarTitle, [this](int idx) {
-        SETTINGS.statusBarTitle = idx;
-        SETTINGS.saveToFile();
-      });
+      chooseValue(StrId::STR_TITLE, titleNames, TITLE_ITEMS, SETTINGS.statusBarTitle);
       return;
     case ITEM_BATTERY:
       SETTINGS.statusBarBattery = (SETTINGS.statusBarBattery + 1) % 2;
       break;
     case ITEM_XTC_STATUS_BAR:
-      optionPopup.show(StrId::STR_XTC_STATUS_BAR, xtcStatusBarNames, XTC_STATUS_BAR_ITEMS, SETTINGS.xtcStatusBarMode,
-                       [this](int idx) {
-                         SETTINGS.xtcStatusBarMode = idx;
-                         SETTINGS.saveToFile();
-                       });
+      chooseValue(StrId::STR_XTC_STATUS_BAR, xtcStatusBarNames, XTC_STATUS_BAR_ITEMS, SETTINGS.xtcStatusBarMode);
       return;
     case ITEM_CLOCK:
       SETTINGS.statusBarClock = (SETTINGS.statusBarClock + 1) % STATUS_BAR_CLOCK_ITEMS;

@@ -9,7 +9,9 @@
 #include <Logging.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
+#include <cstring>
 #include <string>
 
 #include "I18n.h"
@@ -53,6 +55,134 @@ void drawBookmarkStatusIcon(const GfxRenderer& renderer, const int x, const int 
       const uint8_t mask = 1U << (7 - (col % 8));
       renderer.drawPixel(x + col, y + row, (byte & mask) != 0);
     }
+  }
+}
+
+
+// "Chapter 3: The Ring Goes South" -> "The Ring Goes South". Only trims when
+// a name follows a separator (: . - en/em dash), so "Chapter 3" stays. The
+// number may be digits, Roman numerals or words ("Twenty-One").
+void trimChapterPrefix(std::string& text) {
+  const auto lowerAt = [&text](const size_t i) {
+    const char c = text[i];
+    return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c;
+  };
+  const auto startsWith = [&](const size_t i, const char* word) {
+    const size_t n = strlen(word);
+    if (i + n > text.size()) return false;
+    for (size_t k = 0; k < n; k++) {
+      if (lowerAt(i + k) != word[k]) return false;
+    }
+    return true;
+  };
+  const auto skipSpaces = [&text](size_t i) {
+    while (i < text.size() && text[i] == ' ') i++;
+    return i;
+  };
+
+  size_t i = skipSpaces(0);
+  if (startsWith(i, "chapter")) {
+    i += 7;
+  } else if (startsWith(i, "ch.")) {
+    i += 3;
+  } else {
+    return;
+  }
+  if (i >= text.size() || text[i] != ' ') return;
+  i = skipSpaces(i);
+
+  // The number: one token of letters, digits and hyphens.
+  const size_t numberStart = i;
+  while (i < text.size() && (isalnum(static_cast<unsigned char>(text[i])) || text[i] == '-')) i++;
+  if (i == numberStart) return;
+  std::string number;
+  for (size_t k = numberStart; k < i; k++) number += lowerAt(k);
+  static constexpr const char* kNumberWords[] = {
+      "one",     "two",     "three",     "four",     "five",    "six",     "seven",   "eight",
+      "nine",    "ten",     "eleven",    "twelve",   "thirteen", "fourteen", "fifteen", "sixteen",
+      "seventeen", "eighteen", "nineteen", "twenty", "thirty",   "forty",   "fifty",   "sixty",
+      "seventy", "eighty",  "ninety",    "hundred"};
+  const auto isNumberWord = [](const std::string& part) {
+    return std::any_of(std::begin(kNumberWords), std::end(kNumberWords),
+                       [&part](const char* w) { return part == w; });
+  };
+  bool isNumber = number.find_first_not_of("0123456789") == std::string::npos ||
+                  number.find_first_not_of("ivxlc") == std::string::npos;
+  if (!isNumber) {
+    isNumber = true;
+    size_t from = 0;
+    while (from <= number.size()) {
+      const size_t dash = number.find('-', from);
+      const size_t to = dash == std::string::npos ? number.size() : dash;
+      if (!isNumberWord(number.substr(from, to - from))) isNumber = false;
+      from = to + 1;
+    }
+  }
+  if (!isNumber) return;
+
+  i = skipSpaces(i);
+  if (i < text.size() && (text[i] == ':' || text[i] == '.' || text[i] == '-')) {
+    i++;
+  } else if (text.compare(i, 3, "\xE2\x80\x93") == 0 || text.compare(i, 3, "\xE2\x80\x94") == 0) {
+    i += 3;  // en or em dash
+  } else {
+    return;
+  }
+  i = skipSpaces(i);
+  if (i >= text.size()) return;
+  text.erase(0, i);
+}
+
+// "THE RING GOES SOUTH" -> "The Ring Goes South". Titles with any lowercase
+// letter are left alone. Handles ASCII and Latin-1 accents; Roman numerals
+// (II, XIV) stay capital, and short joining words go lowercase except at the
+// start or after a colon.
+void titleCaseIfAllCaps(std::string& text) {
+  const auto at = [&text](const size_t i) { return static_cast<uint8_t>(text[i]); };
+  // UTF-8 À-Þ is C3 80-9E (except × at 97); à-þ is C3 A0-BE.
+  const auto isAccentUpper = [&](const size_t i) {
+    return at(i) == 0xC3 && i + 1 < text.size() && at(i + 1) >= 0x80 && at(i + 1) <= 0x9E && at(i + 1) != 0x97;
+  };
+  for (size_t i = 0; i < text.size(); i++) {
+    if (at(i) >= 'a' && at(i) <= 'z') return;
+    if (at(i) == 0xC3 && i + 1 < text.size() && at(i + 1) >= 0xA0 && at(i + 1) <= 0xBE) return;
+  }
+  static constexpr const char* kSmallWords[] = {"a",  "an", "and", "as", "at", "but", "by", "for", "from",
+                                                "in", "of", "on",  "or", "the", "to", "with"};
+  const auto isUpper = [&](const size_t i) { return (at(i) >= 'A' && at(i) <= 'Z') || isAccentUpper(i); };
+  bool capitalizeNext = true;
+  size_t i = 0;
+  while (i < text.size()) {
+    if (!isUpper(i)) {
+      if (text[i] == ':') capitalizeNext = true;
+      i++;
+      continue;
+    }
+    size_t end = i;
+    while (end < text.size() && (isUpper(end) || text[end] == '\'' || at(end) >= 0x80)) end += isAccentUpper(end) ? 2 : 1;
+    std::string word = text.substr(i, end - i);
+    const bool roman = word.find_first_not_of("IVXLC") == std::string::npos;
+    std::string lower = word;
+    for (size_t k = 0; k < lower.size(); k++) {
+      const auto c = static_cast<uint8_t>(lower[k]);
+      if (c >= 'A' && c <= 'Z') {
+        lower[k] = static_cast<char>(c - 'A' + 'a');
+      } else if (c == 0xC3 && k + 1 < lower.size()) {
+        const auto next = static_cast<uint8_t>(lower[k + 1]);
+        if (next >= 0x80 && next <= 0x9E && next != 0x97) lower[k + 1] = static_cast<char>(next + 0x20);
+        k++;
+      }
+    }
+    const bool small = !capitalizeNext && std::any_of(std::begin(kSmallWords), std::end(kSmallWords),
+                                                      [&lower](const char* w) { return lower == w; });
+    if (!roman) {
+      // Keep the first letter (one or two bytes) as it was.
+      const size_t firstLen = isAccentUpper(i) ? 2 : 1;
+      if (!small) lower.replace(0, firstLen, word, 0, firstLen);
+      text.replace(i, end - i, lower);
+    }
+    capitalizeNext = false;
+    i = end;
   }
 }
 
@@ -379,7 +509,7 @@ void BaseTheme::applyHeaderStatus(const GfxRenderer& renderer, freeink::ui::Head
 }
 
 void BaseTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* title, const char* subtitle,
-                           const bool backButton) const {
+                           const bool backButton, const uint8_t titleMaxLines) const {
   // Every activity header renders through the FreeInkUI header + battery
   // indicator components, styled by the active theme's tokens (padding,
   // centering, underline). Non-interactive frame: no hit rects registered.
@@ -436,6 +566,7 @@ void BaseTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* t
   props.borderEdges = fui::EdgeBottom;
   props.titleText = tokens.titleText;
   props.titleText.align = tokens.headerTitleAlign;
+  props.titleText.maxLines = titleMaxLines;
   props.subtitleText = tokens.smallText;
   props.styles = tokens.popup;
   props.sidePadding = tokens.headerSidePadding;
@@ -730,7 +861,10 @@ void BaseTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount
   }
 }
 
+int BaseTheme::popupFontId() const { return UI_12_FONT_ID; }
+
 Rect BaseTheme::drawPopup(const GfxRenderer& renderer, const char* message) const {
+  const int fontId = popupFontId();
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int marginX = metrics.popupMarginX;
   const int marginY = metrics.popupMarginY;
@@ -738,8 +872,8 @@ Rect BaseTheme::drawPopup(const GfxRenderer& renderer, const char* message) cons
   const EpdFontFamily::Style popupFontFamily = metrics.popupTextBold ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR;
   // Scale y position proportionally to screen height
   const int y = static_cast<int>(renderer.getScreenHeight() * metrics.popupTopOffsetRatio);
-  const int textWidth = renderer.getTextWidth(UI_12_FONT_ID, message, popupFontFamily);
-  const int textHeight = renderer.getLineHeight(UI_12_FONT_ID);
+  const int textWidth = renderer.getTextWidth(fontId, message, popupFontFamily);
+  const int textHeight = renderer.getLineHeight(fontId);
   const int w = textWidth + marginX * 2;
   const int h = textHeight + marginY * 2;
   const int x = (renderer.getScreenWidth() - w) / 2;
@@ -756,7 +890,7 @@ Rect BaseTheme::drawPopup(const GfxRenderer& renderer, const char* message) cons
 
   const int textX = x + (w - textWidth) / 2;
   const int textY = y + marginY + metrics.popupTextBaselineOffsetY;
-  renderer.drawText(UI_12_FONT_ID, textX, textY, message, metrics.popupTextInverted, popupFontFamily);
+  renderer.drawText(fontId, textX, textY, message, metrics.popupTextInverted, popupFontFamily);
   renderer.displayBuffer();
   return Rect{x, y, w, h};
 }
@@ -786,9 +920,37 @@ void BaseTheme::fillPopupProgress(const GfxRenderer& renderer, const Rect& layou
   renderer.displayBuffer(HalDisplay::FAST_REFRESH);
 }
 
+void BaseTheme::fillRibbon(const GfxRenderer& renderer, const int left, const int right, const int top,
+                           const int height, const int notch, const bool notchOnLeft) {
+  const int bottom = top + height - 1;
+  const int tail = notchOnLeft ? left : right;
+  const int inner = notchOnLeft ? left + notch : right - notch;
+  const int head = notchOnLeft ? right : left;
+  const int xs[] = {head, tail, inner, tail, head};
+  const int ys[] = {top, top, top + height / 2, bottom, bottom};
+  renderer.fillPolygon(xs, ys, 5, true);
+}
+
+// Hangs in the right margin from the screen edge, between the running head and the bottom margin.
+void BaseTheme::drawReaderProgressRibbon(const GfxRenderer& renderer, const int percent, const bool textAtTop,
+                                         const int paddingBottom, const bool paperState) {
+  constexpr int kRibbonHeight = 14;
+  constexpr int kRibbonNotch = 4;
+  int marginTop, marginRight, marginBottom, marginLeft;
+  renderer.getOrientedViewableTRBL(&marginTop, &marginRight, &marginBottom, &marginLeft);
+  const int right = renderer.getScreenWidth() - 1;
+  const int width = std::clamp(marginRight + SETTINGS.screenMargin - 2, 8, 16);
+  const int travelTop = marginTop + (textAtTop ? UITheme::getStatusBarTopHeight(renderer) : 0);
+  const int travelBottom = renderer.getScreenHeight() - marginBottom - paddingBottom - SETTINGS.screenMargin;
+  const int travel = std::max(0, travelBottom - travelTop - kRibbonHeight);
+  const int top = travelTop + travel * std::clamp(percent, 0, 100) / 100;
+  GUI.drawProgressRibbon(renderer, right - width + 1, right, top, kRibbonHeight, kRibbonNotch, paperState);
+}
+
 void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, const int currentPage,
                               const int pageCount, std::string title, const int paddingBottom, const int textYOffset,
-                              const bool fillMargin, const bool isPageBookmarked, const bool pageCountEstimated) {
+                              const bool fillMargin, const bool isPageBookmarked, const bool pageCountEstimated,
+                              const bool textAtTop) {
   auto metrics = UITheme::getInstance().getMetrics();
   int orientedMarginTop, orientedMarginRight, orientedMarginBottom, orientedMarginLeft;
   renderer.getOrientedViewableTRBL(&orientedMarginTop, &orientedMarginRight, &orientedMarginBottom,
@@ -798,7 +960,12 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
 
   // Draw Progress Text
   const auto screenHeight = renderer.getScreenHeight();
-  auto textY = screenHeight - UITheme::getInstance().getStatusBarHeight() - orientedMarginBottom - paddingBottom - 4;
+  // At the top, place the reader-font line (book style) below the padding.
+  auto textY = textAtTop ? orientedMarginTop + UITheme::kStatusBarTopPadding +
+                               renderer.getFontAscenderSize(SETTINGS.getReaderFontId()) -
+                               renderer.getFontAscenderSize(SMALL_FONT_ID)
+                         : screenHeight - UITheme::getInstance().getStatusBarHeight() - orientedMarginBottom -
+                               paddingBottom - 4;
 
   const int leftClusterX = metrics.statusBarHorizontalMargin + orientedMarginLeft + 1;
   const int rightClusterX = renderer.getScreenWidth() - metrics.statusBarHorizontalMargin - orientedMarginRight;
@@ -809,10 +976,10 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
     // Right aligned text for progress counter
     char progressStr[32];
 
-    // Book style: just the pages left in the chapter, set like the running title.
-    const bool bookStyle = metrics.statusBarBookStyle && sb.showChapterPageCount;
+    // Book style: pages left in the chapter and/or the book percent, set like the running title.
+    const bool bookStyle = metrics.statusBarBookStyle;
     const int progressFontId = bookStyle ? SETTINGS.getReaderFontId() : SMALL_FONT_ID;
-    const EpdFontFamily::Style progressStyle = bookStyle ? EpdFontFamily::ITALIC : EpdFontFamily::REGULAR;
+    const EpdFontFamily::Style progressStyle = EpdFontFamily::REGULAR;
     const int progressY =
         bookStyle ? textY + renderer.getFontAscenderSize(SMALL_FONT_ID) - renderer.getFontAscenderSize(progressFontId)
                   : textY;
@@ -820,8 +987,16 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
     // Draw the estimate marker separately so it can use the next UI font size.
     const bool showEstimate = pageCountEstimated && sb.showChapterPageCount && !bookStyle;
 
-    if (bookStyle) {
-      snprintf(progressStr, sizeof(progressStr), "%d", std::max(0, pageCount - currentPage));
+    // On a chapter's last page the book percent stands in for the 0.
+    const int pagesLeft = std::max(0, pageCount - currentPage);
+    if (bookStyle && sb.showChapterPageCount && (sb.showBookProgressPercent || pagesLeft == 0)) {
+      if (pagesLeft == 0) {
+        snprintf(progressStr, sizeof(progressStr), "%.0f%%", bookProgress);
+      } else {
+        snprintf(progressStr, sizeof(progressStr), "%d  %.0f%%", pagesLeft, bookProgress);
+      }
+    } else if (bookStyle && sb.showChapterPageCount) {
+      snprintf(progressStr, sizeof(progressStr), "%d", pagesLeft);
     } else if (sb.showBookProgressPercent && sb.showChapterPageCount) {
       snprintf(progressStr, sizeof(progressStr), "%d/%d  %.0f%%", currentPage, pageCount, bookProgress);
     } else if (sb.showBookProgressPercent) {
@@ -846,7 +1021,12 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
   }
 
   // Draw Progress Bar
-  if (sb.showsProgressBar()) {
+  if (sb.showsProgressBar() && metrics.progressRibbon) {
+    const int progress = sb.progressBarMode == CrossPointSettings::STATUS_BAR_PROGRESS_BAR::BOOK_PROGRESS
+                             ? static_cast<int>(bookProgress)
+                             : (pageCount > 0 ? currentPage * 100 / pageCount : 0);
+    drawReaderProgressRibbon(renderer, progress, textAtTop, paddingBottom);
+  } else if (sb.showsProgressBar()) {
     const int barMarginLeft = fillMargin ? 0 : orientedMarginLeft;
     const int barMarginRight = fillMargin ? 0 : orientedMarginRight;
     const int progressBarMaxWidth = renderer.getScreenWidth() - barMarginLeft - barMarginRight;
@@ -933,6 +1113,8 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
       // Share the progress text's baseline.
       titleFontId = SETTINGS.getReaderFontId();
       titleStyle = EpdFontFamily::ITALIC;
+      trimChapterPrefix(title);
+      titleCaseIfAllCaps(title);
       titleY = textY + renderer.getFontAscenderSize(SMALL_FONT_ID) - renderer.getFontAscenderSize(titleFontId);
     }
 
@@ -984,11 +1166,13 @@ void BaseTheme::drawSelectionHandle(const GfxRenderer& renderer, const Rect rect
   renderer.fillRect(left ? rect.x + radius : rect.x, rect.y, radius, radius);
 }
 
-void BaseTheme::drawSelectionActions(const GfxRenderer& renderer, const Rect rect) {
+void BaseTheme::drawSelectionActions(const GfxRenderer& renderer, const Rect rect, const bool editing) {
   const auto& metrics = UITheme::getInstance().getMetrics();
-  const char* labels[] = {tr(STR_LOOKUP), tr(STR_CLIP), tr(STR_BOOKMARK_OPTION)};
-  for (int i = 0; i < 3; ++i) {
-    const Rect button = selectionGeometry::button(rect, i, metrics.menuSpacing);
+  const char* labels[] = {tr(STR_LOOKUP), editing ? tr(STR_DONE) : tr(STR_CLIP), tr(STR_BOOKMARK_OPTION),
+                          tr(STR_DELETE)};
+  const int count = editing ? 4 : 3;
+  for (int i = 0; i < count; ++i) {
+    const Rect button = selectionGeometry::button(rect, i, metrics.menuSpacing, count);
     renderer.fillRoundedRect(button.x, button.y, button.width, button.height, metrics.controlRadius, Color::White);
     renderer.drawRoundedRect(button.x, button.y, button.width, button.height, 1, metrics.controlRadius, true);
     UITheme::drawCenteredWrappedText(renderer, button, uiScaleSpec().smallFontId, labels[i], 2, true,
