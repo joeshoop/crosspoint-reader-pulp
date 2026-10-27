@@ -346,6 +346,16 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // Show the title and author read from inside each book rather than its
   // filename. Users can disable this to make index rebuilds skip EPUB parsing.
   uint8_t libraryUseMetadata = 1;
+  // Books shelf order, chosen on the shelf itself (not in SettingsList).
+  enum LIBRARY_SORT {
+    LIBRARY_SORT_TITLE = 0,
+    LIBRARY_SORT_AUTHOR = 1,
+    LIBRARY_SORT_SERIES = 2,
+    LIBRARY_SORT_RECENT = 3,  // recently read first, then by date added
+    LIBRARY_SORT_ADDED = 4,   // date added (file modification time)
+    LIBRARY_SORT_COUNT
+  };
+  uint8_t librarySort = LIBRARY_SORT_RECENT;
   // Remove a book from the Recent Books list when its End-of-Book screen is reached (0 = off, 1 = on)
   uint8_t removeReadBooksFromRecents = 0;
   // Move epub to /Read/ folder on SD card when finished (0 = disabled, 1 = enabled)

@@ -61,7 +61,10 @@ class Epub {
   ~Epub() = default;
   std::string& getBasePath() { return contentBasePath; }
   bool load(bool buildIfMissing = true, bool skipLoadingCss = false);
-  bool loadMetadata(std::string& title, std::string& author);
+  // series and seriesIndex, when given, are read from the package: the reader's
+  // metadata cache does not keep them.
+  bool loadMetadata(std::string& title, std::string& author, std::string* series = nullptr,
+                    std::optional<float>* seriesIndex = nullptr);
   bool loadSyncMetadata(SyncMetadata& metadata);
   bool clearCache() const;
   void setupCacheDir() const;

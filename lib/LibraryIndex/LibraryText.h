@@ -114,4 +114,11 @@ bool matchesQuery(std::string_view haystack, std::string_view needle);
 // hiding: a single word name simply keys on itself.
 std::string surnameKey(std::string_view displayAuthor);
 
+// A series position as shown: "2", "2.5", "2.25". Hundredths at most; a
+// negative or absent position is "".
+std::string formatSeriesPosition(float position);
+// Sort rank of a formatted position, in hundredths; 0xFFFF for "" so books
+// without a position follow the numbered ones.
+uint16_t seriesPositionRank(std::string_view text);
+
 }  // namespace library

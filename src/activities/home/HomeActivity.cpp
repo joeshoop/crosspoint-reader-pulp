@@ -125,6 +125,19 @@ void HomeActivity::resolveGridCoverPaths() {
 
 void HomeActivity::loadRecentCovers(int coverHeight) {
   recentsLoading = true;
+  if (UITheme::getInstance().getMetrics().homeShelfGrid) {
+    // The grid is already up: no Loading popup, repaint once thumbs exist.
+    bool quiet = true;
+    Rect unused{};
+    bool changed = false;
+    for (RecentBook& book : recentBooks) {
+      if (ensureCoverThumb(renderer, book, coverHeight, quiet, unused)) changed = true;
+    }
+    if (changed) requestUpdate();
+    recentsLoaded = true;
+    recentsLoading = false;
+    return;
+  }
   bool showingLoading = false;
   Rect popupRect;
 
@@ -234,6 +247,26 @@ void HomeActivity::onExit() {
 int HomeActivity::coverTileHeight() const {
   const int themeHeight = GUI.homeCoverTileHeight(renderer);
   return themeHeight > 0 ? themeHeight : UITheme::getInstance().getMetrics().homeCoverTileHeight;
+}
+
+// Two columns with the content padding at the sides and between them, as the
+// Books shelf lays them out; the two rows are centred in the cover tile.
+Rect HomeActivity::shelfCell(const int index) const {
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const Rect content = UITheme::getInstance().getContentArea(renderer);
+  const int side = metrics.contentSidePadding;
+  const int columnWidth = (content.width - 3 * side) / 2;
+  const int cellHeight = GUI.shelfCellHeight(renderer);
+  const int top = metrics.homeTopPadding + std::max(0, (coverTileHeight() - 2 * cellHeight) / 2);
+  return Rect{content.x + side + (index % 2) * (columnWidth + side), top + (index / 2) * cellHeight, columnWidth,
+              cellHeight};
+}
+
+void HomeActivity::drawShelfGrid() {
+  const int coverHeight = GUI.shelfCoverHeight(renderer);
+  for (int i = 0; i < static_cast<int>(recentBooks.size()); i++) {
+    GUI.drawShelfBook(renderer, shelfCell(i), recentBooks[static_cast<size_t>(i)], coverHeight, selectorIndex == i);
+  }
 }
 
 bool HomeActivity::storeCoverBuffer() {
@@ -383,6 +416,29 @@ void HomeActivity::loop() {
   // screen-relative getScreenWidth()/contentSidePadding here offset the touch
   // targets from the drawn covers by content.x on bezel-inset panels (EEGO A4).
   const Rect content = UITheme::getInstance().getContentArea(renderer);
+  if (metrics.homeShelfGrid) {
+    const int bookCount = static_cast<int>(recentBooks.size());
+    for (int row = 0; row * 2 < bookCount; row++) {
+      const Rect first = shelfCell(row * 2);
+      int column = -1;
+      const auto touch = mappedInput.colTouch(column, first.x, first.width + metrics.contentSidePadding,
+                                              std::min(2, bookCount - row * 2), first.y, first.y + first.height,
+                                              first.width);
+      if (touch == MappedInputManager::RowTouch::None) continue;
+      const int touchedBook = row * 2 + column;
+      if (touch == MappedInputManager::RowTouch::Down) {
+        if (selectorIndex != touchedBook) {
+          selectorIndex = touchedBook;
+          requestUpdate();
+        }
+      } else {
+        selectorIndex = touchedBook;
+        haptic_feedback::touchAction();
+        activateSelection();
+      }
+      return;
+    }
+  }
   const int coverColumnCount = std::max(1, metrics.homeRecentBooksCount);
   const int recentCount = std::min(static_cast<int>(recentBooks.size()), coverColumnCount);
   const int coverColumnWidth = (content.width - 2 * metrics.contentSidePadding) / coverColumnCount;
@@ -490,9 +546,13 @@ void HomeActivity::render(RenderLock&&) {
   coverRectW = content.width;
   coverRectH = coverTileHeight();
 
-  GUI.drawRecentBookCover(renderer, Rect{content.x, metrics.homeTopPadding, content.width, coverTileHeight()},
-                          recentBooks, selectorIndex, coverRendered, coverBufferStored, bufferRestored,
-                          std::bind(&HomeActivity::storeCoverBuffer, this));
+  if (metrics.homeShelfGrid && !recentBooks.empty()) {
+    drawShelfGrid();
+  } else {
+    GUI.drawRecentBookCover(renderer, Rect{content.x, metrics.homeTopPadding, content.width, coverTileHeight()},
+                            recentBooks, selectorIndex, coverRendered, coverBufferStored, bufferRestored,
+                            std::bind(&HomeActivity::storeCoverBuffer, this));
+  }
 
   // Build menu items dynamically
   std::vector<const char*> menuItems = {tr(STR_BROWSE_FILES), tr(STR_LIBRARY), tr(STR_FILE_TRANSFER),
@@ -540,7 +600,8 @@ void HomeActivity::render(RenderLock&&) {
     requestUpdate();
   } else if (!recentsLoaded && !recentsLoading) {
     recentsLoading = true;
-    const int themeThumbHeight = GUI.homeCoverThumbHeight(renderer);
+    const int themeThumbHeight =
+        metrics.homeShelfGrid ? GUI.shelfCoverHeight(renderer) : GUI.homeCoverThumbHeight(renderer);
     loadRecentCovers(themeThumbHeight > 0 ? themeThumbHeight : metrics.homeCoverHeight);
   }
 }

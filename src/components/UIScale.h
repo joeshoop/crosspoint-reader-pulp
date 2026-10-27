@@ -1,5 +1,8 @@
 #pragma once
 #include "CrossPointSettings.h"
+#include "ReaderFontSizes.h"
+
+#include <iterator>
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -37,4 +40,22 @@ inline UIScaleSpec uiScaleSpec() {
 // themes set them in the reader font too; other themes keep the id as given.
 inline int themedFontId(const int fontId) {
   return UITheme::getInstance().getMetrics().uiUsesReaderFont ? SETTINGS.getReaderFontId() : fontId;
+}
+
+// Sans for the reader's overlay chrome (float menu pills, Themes & Settings sheet): built-in
+// Noto Sans at the size nearest the reader font's, whatever the book's face.
+inline int readerChromeSansFontId() {
+  const uint8_t pt = snapToNearestPointSize(BUILTIN_READER_POINT_SIZES, std::size(BUILTIN_READER_POINT_SIZES),
+                                            SETTINGS.fontPointSize);
+  switch (pt) {
+    case 12:
+      return NOTOSANS_12_FONT_ID;
+    case 16:
+      return NOTOSANS_16_FONT_ID;
+    case 18:
+      return NOTOSANS_18_FONT_ID;
+    case 14:
+    default:
+      return NOTOSANS_14_FONT_ID;
+  }
 }

@@ -104,6 +104,8 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
   // The displayed option list varies by board, so this setting uses a dynamic
   // display-index mapping and is skipped by the generic persistence loop.
   doc["longPressMenuFunction"] = longPressMenuFunction;
+  // Chosen on the Books shelf, not in SettingsList: saved manually.
+  doc["librarySort"] = librarySort;
   doc["shortPwrBtn"] = shortPwrBtn;
   doc["uiTheme"] = uiTheme;
 
@@ -266,6 +268,8 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
   }
   // Dictionary folder name — uses dynamic getter/setter in SettingsList, load manually
   copyToField(dictionaryName, doc["dictionaryName"] | "", sizeof(dictionaryName));
+  librarySort = doc["librarySort"] | static_cast<uint8_t>(LIBRARY_SORT_RECENT);
+  if (librarySort >= LIBRARY_SORT_COUNT) librarySort = LIBRARY_SORT_RECENT;
   // Language -- stored as code string for stability across enum reorders.
   if (doc["language"].is<const char*>()) {
     language = static_cast<uint8_t>(I18n::languageFromCode(doc["language"].as<const char*>()));

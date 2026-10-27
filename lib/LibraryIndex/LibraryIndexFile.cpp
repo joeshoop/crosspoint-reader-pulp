@@ -86,6 +86,11 @@ uint16_t LibraryIndexFile::ordinalForRow(const SortOrder order, const uint16_t r
       return readAt(arrivalOrderOffset(head, k), &ordinal, sizeof(ordinal)) && ordinal < head.bookCount ? ordinal
                                                                                                         : NONE;
     }
+    case SortOrder::SeriesAsc: {
+      uint16_t ordinal = NONE;
+      return readAt(seriesOrderOffset(head, row), &ordinal, sizeof(ordinal)) && ordinal < head.bookCount ? ordinal
+                                                                                                         : NONE;
+    }
   }
   return NONE;
 }
@@ -229,6 +234,12 @@ bool LibraryIndexFile::readTitle(const ClixRecord& record, std::string& out) {
 
 bool LibraryIndexFile::readSourceAuthor(const ClixRecord& record, std::string& out) {
   return readBlobField(record, 2, out);
+}
+
+bool LibraryIndexFile::readSeries(const ClixRecord& record, std::string& out) { return readBlobField(record, 3, out); }
+
+bool LibraryIndexFile::readSeriesPosition(const ClixRecord& record, std::string& out) {
+  return readBlobField(record, 4, out);
 }
 
 bool LibraryIndexFile::readPath(const ClixRecord& record, std::string& out) {

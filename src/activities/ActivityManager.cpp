@@ -351,6 +351,14 @@ void ActivityManager::goHome(HomeMenuItem initialMenuItem, bool cleanInitialRefr
       initialMenuItem = HomeMenuItem::SETTINGS_MENU;
     }
   }
+  if (LibraryListActivity::shelfIsHome()) {
+    // Touch Pulp: the Books shelf is Home.
+    if (auto shelf = makeUniqueNoThrow<LibraryListActivity>(renderer, mappedInput, /*asHome=*/true)) {
+      replaceActivity(std::move(shelf));
+      return;
+    }
+    LOG_ERR("ACT", "OOM: library activity");
+  }
   replaceActivity(std::make_unique<HomeActivity>(renderer, mappedInput, initialMenuItem, cleanInitialRefresh));
 }
 void ActivityManager::goToCrashReport() { replaceActivity(std::make_unique<CrashActivity>(renderer, mappedInput)); }

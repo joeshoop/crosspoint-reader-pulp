@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <deque>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -17,6 +18,9 @@ class BookMetadataCache {
     std::string language;
     std::string coverItemHref;
     std::string textReferenceHref;
+    // Read from the package; not stored in book.bin.
+    std::string series;
+    std::optional<float> seriesIndex;
   };
 
   struct SpineEntry {

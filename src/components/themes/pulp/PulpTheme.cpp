@@ -337,6 +337,35 @@ static void drawUpArrow(const GfxRenderer& renderer, const int fontId, const int
   freeink::ui::pencilSegment(rightX, rightY, leftX, leftY, seed + 3, plot, kWeight, 0.5f);
 }
 
+// A small pencil book for the shelf list rows. Sketched once into a static
+// 1-bit buffer, so every row shares it and no cover is read.
+freeink::ui::BitmapRef PulpTheme::shelfBookIcon() const {
+  constexpr int kSize = 28;
+  constexpr int kStride = (kSize + 7) / 8;
+  static uint8_t bits[kSize * kStride];
+  static bool drawn = false;
+  if (!drawn) {
+    drawn = true;
+    const auto plot = [](const int x, const int y) {
+      if (x < 0 || y < 0 || x >= kSize || y >= kSize) return;
+      bits[y * kStride + x / 8] |= static_cast<uint8_t>(0x80u >> (x % 8));
+    };
+    uint32_t seed = 0x6A09E667u;
+    const auto line = [&](const int x0, const int y0, const int x1, const int y1, const int weight) {
+      freeink::ui::pencilSegment(x0, y0, x1, y1, seed++, plot, weight, 0.5f);
+    };
+    // Cover, spine, and two title marks.
+    line(6, 2, 22, 2, 2);
+    line(22, 2, 22, 25, 2);
+    line(22, 25, 6, 25, 2);
+    line(6, 25, 6, 2, 2);
+    line(10, 3, 10, 24, 1);
+    line(13, 8, 19, 8, 1);
+    line(13, 12, 17, 12, 1);
+  }
+  return freeink::ui::BitmapRef{bits, kSize, kSize, freeink::ui::BitmapFormat::BW1, false};
+}
+
 // A pencil sketch of books standing in a row, beside the label (either
 // side). Side, count, heights and widths come from `seed`.
 static void drawBookStack(const GfxRenderer& renderer, const int fontId, const int textLeft, const int textRight,
@@ -526,6 +555,10 @@ int PulpTheme::shelfCoverHeight(const GfxRenderer& renderer) const {
 int PulpTheme::shelfCellHeight(const GfxRenderer& renderer) const {
   return kShelfTopPad + shelfCoverHeight(renderer) + kShelfFrame.coverBottom + kShelfTopPad;
 }
+
+int PulpTheme::shelfBookWidth(const int coverHeight) const { return coverHeight * 2 / 3 + kShelfFrame.coverRight; }
+
+int PulpTheme::shelfSideZone() const { return kShelfSideZone; }
 
 // The selected book is circled in pencil, the loop drawn first so the book
 // sits on top of it. A fresh loop each time a book gains the selection.

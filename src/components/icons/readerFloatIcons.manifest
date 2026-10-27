@@ -1,0 +1,29 @@
+# Regenerate from the repository root with:
+#   python3 freeink-sdk/libs/assets/Icons/tools/gen_icons.py \
+#     --manifest src/components/icons/readerFloatIcons.manifest \
+#     --svgdir freeink-sdk/libs/assets/Icons/lucide/icons \
+#     --sizes 28 --out src/components/icons/readerFloatIcons.h
+float-close = x
+float-menu = ellipsis
+float-contents = text-align-end
+float-text = a-large-small
+float-share = share
+float-rotate = rotate-cw-square
+float-bookmark = bookmark
+float-bookmarked = bookmark-check
+float-settings = settings
+float-sort = settings-2
+float-transfer = wifi
+float-book = book-text
+float-library = library-big
+float-sun-dim = sun-dim
+float-sun = sun
+float-cool = thermometer-snowflake
+float-warm = thermometer-sun
+float-night = moon
+float-refresh = loader
+float-chevron-down = chevron-down
+float-battery-full = battery-full
+float-battery-medium = battery-medium
+float-battery-low = battery-low
+float-battery-charging = battery-charging

@@ -53,3 +53,9 @@ bool ensureCoverThumb(GfxRenderer& renderer, RecentBook& book, const int height,
   book.coverBmpPath.clear();
   return false;
 }
+
+std::string coverThumbBasePath(const std::string& bookPath) {
+  if (FsHelpers::hasReflowableBookExtension(bookPath)) return Epub(bookPath, "/.crosspoint").getThumbBmpPath();
+  if (FsHelpers::hasXtcExtension(bookPath)) return Xtc(bookPath, "/.crosspoint").getThumbBmpPath();
+  return "";
+}

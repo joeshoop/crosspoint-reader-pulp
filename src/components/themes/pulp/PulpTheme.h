@@ -60,9 +60,10 @@ constexpr ThemeMetrics values = {.batteryWidth = 15,
                                  // Cover plus the "Continue Reading" band inside the card frame.
                                  .homeCoverHeight = 420,
                                  .homeCoverTileHeight = 470,
-                                 .homeRecentBooksCount = 1,
+                                 .homeRecentBooksCount = 4,
                                  .homeContinueReadingInMenu = false,
                                  .homeMinimalMenu = true,
+                                 .homeShelfGrid = true,
                                  .libraryBookShelf = true,
                                  .sleepCoverBookmark = true,
                                  .homeMenuTopOffset = 4,  // = menuSpacing: Continue Reading spaced like a menu row
@@ -116,8 +117,11 @@ class PulpTheme : public BaseTheme {
   int homeCoverThumbHeight(const GfxRenderer& renderer) const override;
   int shelfCoverHeight(const GfxRenderer& renderer) const override;
   int shelfCellHeight(const GfxRenderer& renderer) const override;
+  int shelfBookWidth(int coverHeight) const override;
+  int shelfSideZone() const override;
   void drawShelfBook(GfxRenderer& renderer, Rect cell, const RecentBook& book, int coverHeight,
                      bool selected) const override;
+  freeink::ui::BitmapRef shelfBookIcon() const override;
   bool drawTextHighlightBand(const GfxRenderer& renderer, int x, int lineTop, int width, int lineHeight,
                              bool muted) const override;
   bool drawTextHighlighter(const GfxRenderer& renderer, int textX, int lineTop, int textWidth, int lineHeight,

@@ -11,9 +11,11 @@
 #include <vector>
 
 #include "CrossPointSettings.h"
+#include "FontDownloadActivity.h"
 #include "MappedInputManager.h"
 #include "ReaderFontSizes.h"
 #include "SdCardFontSystem.h"
+#include "StatusBarSettingsActivity.h"
 #include "TextSettingsPreview.h"
 #include "components/GrayOverlay.h"
 #include "components/UITheme.h"
@@ -56,6 +58,7 @@ constexpr StrId CHARACTER_SPACING_IDS[] = {StrId::STR_SPACING_MINUS_2, StrId::ST
                                            StrId::STR_SPACING_PLUS_2};
 constexpr StrId ALIGNMENT_IDS[] = {StrId::STR_JUSTIFY, StrId::STR_ALIGN_LEFT, StrId::STR_CENTER, StrId::STR_ALIGN_RIGHT,
                                    StrId::STR_BOOK_S_STYLE};
+constexpr StrId IMAGES_IDS[] = {StrId::STR_IMAGES_DISPLAY, StrId::STR_IMAGES_PLACEHOLDER, StrId::STR_IMAGES_SUPPRESS};
 constexpr int MARGIN_MIN = CrossPointSettings::SCREEN_MARGIN_MIN;
 constexpr int MARGIN_MAX = CrossPointSettings::SCREEN_MARGIN_MAX;
 constexpr int MARGIN_STEP = CrossPointSettings::SCREEN_MARGIN_STEP;
@@ -77,6 +80,7 @@ TextSettingsActivity::TextSettingsActivity(GfxRenderer& renderer, MappedInputMan
 const char* TextSettingsActivity::tabLabel(const int index) const { return I18N.get(TAB_NAME_IDS[index]); }
 
 void TextSettingsActivity::onEnter() {
+  if (inSheet()) useSansChrome();  // overlay chrome over the book stays sans
   UiTabListActivity::onEnter();
 
   metrics_ = UITheme::getInstance().getMetrics();
@@ -85,6 +89,25 @@ void TextSettingsActivity::onEnter() {
   usableHeight = renderer.getScreenHeight() - afterHeader - bottomReserved;
   previewHeight = usableHeight * metrics_.previewHeightPercent / 100;
 
+  reloadFonts();
+  // Per-tab ring positions (0 = tab bar, 1..N = row). The base reset each
+  // tab's nav with followOnBuild armed, so each tab's first build shows its
+  // remembered selection (Family/Size open on the current item).
+  for (auto& n : tabNavs) n.selected = 1;  // default to the first list row
+  tabNavs[static_cast<int>(Tab::Family)].selected = currentFamilyIndex_ + 1;
+  tabNavs[static_cast<int>(Tab::Size)].selected = currentSizeIndex_ + 1;
+  tabNavs[static_cast<int>(tab_)].selected = 0;  // screen opens with the tab bar focused, not a list row
+  if (usesSingleList()) {
+    tab_ = Tab::Family;  // the one list lives in the first tab's nav
+    tabNavs[static_cast<int>(Tab::Family)].selected = 1;
+    page_ = mappedInput.hasTouch() ? Page::Main : Page::All;
+  }
+
+  rebuildRowItems();
+  if (inSheet()) entryKey_ = textsettings::pagePreviewKey(renderer);
+}
+
+void TextSettingsActivity::reloadFonts() {
   fonts_.clear();
   fonts_.reserve(CrossPointSettings::BUILTIN_FONT_COUNT + (registry_ ? registry_->getFamilyCount() : 0));
   fonts_.push_back({I18N.get(StrId::STR_NOTO_SERIF), true, static_cast<uint8_t>(CrossPointSettings::NOTOSERIF)});
@@ -99,20 +122,64 @@ void TextSettingsActivity::onEnter() {
   rebuildSizeList();
 
   currentFamilyIndex_ = findCurrentFontIndex(registry_, SETTINGS.sdFontFamilyName, SETTINGS.fontFamily);
-  // Per-tab ring positions (0 = tab bar, 1..N = row). The base reset each
-  // tab's nav with followOnBuild armed, so each tab's first build shows its
-  // remembered selection (Family/Size open on the current item).
-  for (auto& n : tabNavs) n.selected = 1;  // default to the first list row
-  tabNavs[static_cast<int>(Tab::Family)].selected = currentFamilyIndex_ + 1;
-  tabNavs[static_cast<int>(Tab::Size)].selected = currentSizeIndex_ + 1;
-  tabNavs[static_cast<int>(tab_)].selected = 0;  // screen opens with the tab bar focused, not a list row
-  if (usesSingleList()) {
-    tab_ = Tab::Family;  // the one list lives in the first tab's nav
-    tabNavs[static_cast<int>(Tab::Family)].selected = 1;
-  }
+}
 
+void TextSettingsActivity::rebuildSingleRows() {
+  singleRows_.clear();
+  const auto layout = [this](LayoutRow r) { singleRows_.push_back({RowKind::Layout, static_cast<uint8_t>(r)}); };
+  const auto style = [this](StyleRow r) { singleRows_.push_back({RowKind::Style, static_cast<uint8_t>(r)}); };
+  switch (page_) {
+    case Page::All:
+      singleRows_.push_back({RowKind::Font, 0});
+      singleRows_.push_back({RowKind::Size, 0});
+      for (int r = 0; r < static_cast<int>(LayoutRow::Count); r++) layout(static_cast<LayoutRow>(r));
+      for (int r = 0; r < static_cast<int>(StyleRow::Count); r++) style(static_cast<StyleRow>(r));
+      break;
+    case Page::Main:
+      singleRows_.push_back({RowKind::Font, 0});
+      singleRows_.push_back({RowKind::Size, 0});
+      layout(LayoutRow::LineSpacing);
+      layout(LayoutRow::ScreenMargin);
+      layout(LayoutRow::Alignment);
+      singleRows_.push_back({RowKind::TypographyLink, 0});
+      singleRows_.push_back({RowKind::StatusBarLink, 0});
+      singleRows_.push_back({RowKind::ManageFontsLink, 0});
+      break;
+    case Page::Typography:
+      layout(LayoutRow::WordSpacing);
+      layout(LayoutRow::CharacterSpacing);
+      layout(LayoutRow::ParaSpacing);
+      layout(LayoutRow::ParaIndentation);
+      style(StyleRow::Hyphenation);
+      style(StyleRow::EmbeddedStyle);
+      style(StyleRow::FocusReading);
+      style(StyleRow::AntiAliasing);
+      singleRows_.push_back({RowKind::Images, 0});
+      break;
+  }
+}
+
+void TextSettingsActivity::showPage(const Page page) {
+  page_ = page;
   rebuildRowItems();
-  if (inSheet()) entryKey_ = textsettings::pagePreviewKey(renderer);
+  auto& n = activeNav();
+  n.selected = 1;
+  n.followOnBuild = true;
+  requestUpdate();
+}
+
+bool TextSettingsActivity::rowStartsSection(const int row) const {
+  if (!usesSingleList()) return row == 0;
+  if (row <= 0 || row >= static_cast<int>(singleRows_.size())) return row == 0;
+  const RowKind kind = singleRows_[row].kind;
+  switch (page_) {
+    case Page::All:
+      return kind != singleRows_[row - 1].kind && (kind == RowKind::Layout || kind == RowKind::Style);
+    case Page::Main:
+      return kind == RowKind::TypographyLink;
+    default:
+      return false;
+  }
 }
 
 bool TextSettingsActivity::usesSingleList() { return UITheme::getInstance().getMetrics().settingsSingleList; }
@@ -123,17 +190,18 @@ void TextSettingsActivity::navigateButtons() {
     return;
   }
   // No tab bar: the ring is just the rows (1..count).
-  constexpr int count = kSingleListCount;
-  buttonNavigator.onNextPress([this] { stepRowsWithSectionJumps(1, count); });
-  buttonNavigator.onPreviousPress([this] { stepRowsWithSectionJumps(-1, count); });
-  buttonNavigator.onNextContinuous([this] { holdStepRows(1, count); });
-  buttonNavigator.onPreviousContinuous([this] { holdStepRows(-1, count); });
+  const int count = listCount();
+  buttonNavigator.onNextPress([this, count] { stepRowsWithSectionJumps(1, count); });
+  buttonNavigator.onPreviousPress([this, count] { stepRowsWithSectionJumps(-1, count); });
+  buttonNavigator.onNextContinuous([this, count] { holdStepRows(1, count); });
+  buttonNavigator.onPreviousContinuous([this, count] { holdStepRows(-1, count); });
 }
 
 // Rebuilds rowItems_ (label + actionValue) for the active tab. Structural —
 // call only when tab_ or its backing data (fonts_/sizes_) changes, never from
 // buildScreen(), which just refreshes rowValues_/rowItems_[].value in place.
 void TextSettingsActivity::rebuildRowItems() {
+  if (usesSingleList()) rebuildSingleRows();
   const int count = listCount();
   rowValues_.assign(count, std::string());
   rowItems_.clear();
@@ -141,17 +209,37 @@ void TextSettingsActivity::rebuildRowItems() {
   if (usesSingleList()) {
     for (int i = 0; i < count; i++) {
       fui::ListItem item;
-      if (i == kFontRow) {
-        item.label = tr(STR_FONT);
-      } else if (i == kSizeRow) {
-        item.label = tr(STR_SIZE);
-      } else if (i < kStyleStart) {
-        item.label = I18N.get(LAYOUT_ROW_NAME_IDS[i - kLayoutStart]);
-        if (i == kLayoutStart) item.sectionHeading = tr(STR_LAYOUT);
-      } else {
-        item.label = I18N.get(STYLE_ROW_NAME_IDS[i - kStyleStart]);
-        if (i == kStyleStart) item.sectionHeading = tr(STR_STYLE);
+      const SingleRow& row = singleRows_[i];
+      switch (row.kind) {
+        case RowKind::Font:
+          item.label = tr(STR_FONT);
+          break;
+        case RowKind::Size:
+          item.label = tr(STR_SIZE);
+          break;
+        case RowKind::Layout:
+          item.label = I18N.get(LAYOUT_ROW_NAME_IDS[row.index]);
+          if (page_ == Page::All && rowStartsSection(i)) item.sectionHeading = tr(STR_LAYOUT);
+          break;
+        case RowKind::Style:
+          item.label = I18N.get(STYLE_ROW_NAME_IDS[row.index]);
+          if (page_ == Page::All && rowStartsSection(i)) item.sectionHeading = tr(STR_STYLE);
+          break;
+        case RowKind::Images:
+          item.label = tr(STR_IMAGES);
+          break;
+        case RowKind::TypographyLink:
+          item.label = tr(STR_TYPOGRAPHY);
+          break;
+        case RowKind::StatusBarLink:
+          item.label = tr(STR_STATUS_BAR);
+          break;
+        case RowKind::ManageFontsLink:
+          item.label = tr(STR_MANAGE_FONTS);
+          break;
       }
+      // The Typography page names itself, so Back has somewhere obvious to go.
+      if (page_ == Page::Typography && i == 0) item.sectionHeading = tr(STR_TYPOGRAPHY);
       item.actionValue = static_cast<int16_t>(i);
       rowItems_.push_back(item);
     }
@@ -233,11 +321,23 @@ void TextSettingsActivity::activateIndex(const int index) {
 }
 
 bool TextSettingsActivity::handleCustomInput() {
-  return optionPopup_.handleInput(mappedInput, [this] { requestUpdate(); });
+  if (optionPopup_.handleInput(mappedInput, [this] { requestUpdate(); })) return true;
+  // A tap on the page above the sheet steps back, like Back.
+  int x = 0;
+  int y = 0;
+  if (inSheet() && mappedInput.wasScreenTapped(x, y) && y < sheetTop_) {
+    finish();
+    return true;
+  }
+  return false;
 }
 
 bool TextSettingsActivity::handleButtons() {
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+    if (page_ == Page::Typography) {
+      showPage(Page::Main);
+      return true;
+    }
     finish();
     return true;
   }
@@ -322,7 +422,7 @@ void TextSettingsActivity::buildSingleList(UiScreen& screen) {
   const int count = listCount();
   for (int i = 0; i < count; i++) {
     rowValues_[i] = singleListValueText(i);
-    rowItems_[i].value = rowValues_[i].c_str();
+    rowItems_[i].value = rowValues_[i].empty() ? nullptr : rowValues_[i].c_str();
   }
   fui::ListProps props;
   props.items = rowItems_.data();
@@ -671,8 +771,8 @@ bool TextSettingsActivity::focusedRowHasNoPreview() const {
   if (ringPos() == 0) return false;
   int styleRow = ringPos() - 1;
   if (usesSingleList()) {
-    styleRow -= kStyleStart;
-    if (styleRow < 0) return false;
+    if (styleRow >= static_cast<int>(singleRows_.size()) || singleRows_[styleRow].kind != RowKind::Style) return false;
+    styleRow = singleRows_[styleRow].index;
   } else if (tab_ != Tab::Style) {
     return false;
   }
@@ -692,7 +792,7 @@ void TextSettingsActivity::switchTab(const int direction) {
 }
 
 int TextSettingsActivity::listCount() const {
-  if (usesSingleList()) return kSingleListCount;
+  if (usesSingleList()) return static_cast<int>(singleRows_.size());
   switch (tab_) {
     case Tab::Family:
       return static_cast<int>(fonts_.size());
@@ -709,20 +809,60 @@ int TextSettingsActivity::listCount() const {
 }
 
 void TextSettingsActivity::activateSingleListRow(const int row) {
-  if (row == kFontRow) {
-    if (fonts_.size() < 2) return;
-    applyFamily((currentFamilyIndex_ + 1) % static_cast<int>(fonts_.size()));
-    SETTINGS.saveToFile();  // outside applyFamily's RenderLock
-    requestUpdate();
-  } else if (row == kSizeRow) {
-    if (sizes_.size() < 2) return;
-    applySize((currentSizeIndex_ + 1) % static_cast<int>(sizes_.size()));
-    SETTINGS.saveToFile();
-    requestUpdate();
-  } else if (row < kStyleStart) {
-    cycleLayoutRow(row - kLayoutStart);
-  } else if (row < kSingleListCount) {
-    confirmStyleRow(row - kStyleStart);
+  if (row < 0 || row >= static_cast<int>(singleRows_.size())) return;
+  const SingleRow& r = singleRows_[row];
+  switch (r.kind) {
+    case RowKind::Font:
+      if (fonts_.size() < 2) return;
+      applyFamily((currentFamilyIndex_ + 1) % static_cast<int>(fonts_.size()));
+      SETTINGS.saveToFile();  // outside applyFamily's RenderLock
+      requestUpdate();
+      break;
+    case RowKind::Size:
+      if (sizes_.size() < 2) return;
+      applySize((currentSizeIndex_ + 1) % static_cast<int>(sizes_.size()));
+      SETTINGS.saveToFile();
+      requestUpdate();
+      break;
+    case RowKind::Layout:
+      cycleLayoutRow(r.index);
+      break;
+    case RowKind::Style:
+      confirmStyleRow(r.index);
+      break;
+    case RowKind::Images:
+      SETTINGS.imageRendering = static_cast<uint8_t>((SETTINGS.imageRendering + 1) % std::size(IMAGES_IDS));
+      SETTINGS.saveToFile();
+      requestUpdate();
+      break;
+    case RowKind::TypographyLink:
+      showPage(Page::Typography);
+      break;
+    // The linked screens paint the whole framebuffer, so on return the band
+    // above the sheet is redrawn as the preview rather than left as the page.
+    case RowKind::StatusBarLink:
+      startActivityForResult(std::make_unique<StatusBarSettingsActivity>(renderer, mappedInput),
+                             [this](const ActivityResult&) {
+                               SETTINGS.saveToFile();
+                               pageEdited_ = true;
+                               grayPreviewHash_ = 0;
+                               requestUpdate();
+                             });
+      break;
+    case RowKind::ManageFontsLink:
+      startActivityForResult(std::make_unique<FontDownloadActivity>(renderer, mappedInput),
+                             [this](const ActivityResult&) {
+                               SETTINGS.saveToFile();
+                               {
+                                 RenderLock lock;
+                                 reloadFonts();
+                               }
+                               rebuildRowItems();
+                               pageEdited_ = true;
+                               grayPreviewHash_ = 0;
+                               requestUpdate();
+                             });
+      break;
   }
 }
 
@@ -763,21 +903,28 @@ void TextSettingsActivity::cycleLayoutRow(const int row) {
 }
 
 std::string TextSettingsActivity::singleListValueText(const int row) const {
-  if (row == kFontRow) {
-    return currentFamilyIndex_ >= 0 && currentFamilyIndex_ < static_cast<int>(fonts_.size())
-               ? fonts_[currentFamilyIndex_].name
-               : "";
-  }
-  if (row == kSizeRow) {
-    return currentSizeIndex_ >= 0 && currentSizeIndex_ < static_cast<int>(sizes_.size())
-               ? sizes_[currentSizeIndex_].name
-               : "";
-  }
-  if (row < kStyleStart) {
-    if (row - kLayoutStart == static_cast<int>(LayoutRow::ParaSpacing)) {
-      return SETTINGS.extraParagraphSpacing ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
+  const SingleRow& r = singleRows_[row];
+  switch (r.kind) {
+    case RowKind::Font:
+      return currentFamilyIndex_ >= 0 && currentFamilyIndex_ < static_cast<int>(fonts_.size())
+                 ? fonts_[currentFamilyIndex_].name
+                 : "";
+    case RowKind::Size:
+      return currentSizeIndex_ >= 0 && currentSizeIndex_ < static_cast<int>(sizes_.size())
+                 ? sizes_[currentSizeIndex_].name
+                 : "";
+    case RowKind::Layout:
+      if (r.index == static_cast<int>(LayoutRow::ParaSpacing)) {
+        return SETTINGS.extraParagraphSpacing ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
+      }
+      return layoutValueText(r.index);
+    case RowKind::Style:
+      return styleRowChecked(r.index) ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
+    case RowKind::Images: {
+      const uint8_t v = SETTINGS.imageRendering;
+      return I18N.get(v < std::size(IMAGES_IDS) ? IMAGES_IDS[v] : IMAGES_IDS[0]);
     }
-    return layoutValueText(row - kLayoutStart);
+    default:
+      return "";  // links carry no value
   }
-  return styleRowChecked(row - kStyleStart) ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
 }

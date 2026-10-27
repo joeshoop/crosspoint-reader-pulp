@@ -3,7 +3,9 @@
 #include <Epub/Page.h>
 #include <Epub/blocks/TextBlock.h>
 #include <FontCacheManager.h>
+#include <FreeInkUI.h>
 #include <FsHelpers.h>
+#include <Bitmap.h>
 #include <GfxRenderer.h>
 #include <HalDisplay.h>
 #include <HalFrontlight.h>
@@ -50,6 +52,9 @@
 #include "SilentRestart.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "activities/settings/TextSettingsActivity.h"
+#include "components/BatteryStatus.h"
+#include "components/FloatButtons.h"
+#include "components/icons/readerFloatIcons.h"
 #include "clippings/ClippingText.h"
 #include "clippings/ClippingsManager.h"
 #include "components/UIScale.h"
@@ -318,7 +323,8 @@ void EpubReaderActivity::openReaderMenu() {
     // go-to-percent... cancelled back to the menu), so the framebuffer holds
     // that screen, not the page: re-render the page and let renderBook() put
     // the toolbar on top. The in-reader fast path is openOverlay().
-    overlay = rootOverlay();
+    // Back from a screen the float menu opened: return to that menu.
+    overlay = usesFloatMenu() ? Overlay::FloatMenu : rootOverlay();
     focusedTool = 0;
     panelIndex = 0;
     panelHoldJumped = false;
@@ -602,6 +608,22 @@ void EpubReaderActivity::loop() {
     requestUpdate();
     return;
   }
+  // Likewise the text (the control center's size buttons): rebuild the
+  // chapter at the same place.
+  if (section && !section->isBuilding() &&
+      readerRenderSpecSignature(SETTINGS.readerRenderSpec(buildViewportWidth, buildViewportHeight)) !=
+          builtSpecSignature) {
+    {
+      RenderLock lock;
+      rememberCurrentContentOffset();
+      cachedSpineIndex = currentSpineIndex;
+      cachedChapterTotalPageCount = section->pageCount;
+      nextPageNumber = section->currentPage;
+      section.reset();
+    }
+    requestUpdate();
+    return;
+  }
 
   constexpr unsigned long IDLE_PREWARM_DEBOUNCE_MS = 400;
   {
@@ -685,6 +707,12 @@ void EpubReaderActivity::loop() {
 
   const auto touch =
       ReaderUtils::detectTouchPageTurn(renderer, mappedInput, ReaderUtils::isRtlBookLanguage(epub->getLanguage()));
+
+  // Pulp on touch has no status bar to show the battery.
+  if (usesFloatMenu() && overlay == Overlay::None && !noticePending && !noticeShown &&
+      battery_status::takeLowNotice()) {
+    showNotice(StrId::STR_BATTERY_LOW);
+  }
 
   if (noticePending && (millis() - noticeTime) >= kNoticeDelayMs) {
     noticePending = false;
@@ -1559,6 +1587,7 @@ void EpubReaderActivity::renderBook() {
     LOG_DBG("ERS", "Loading file: %s, index: %d", filepath.c_str(), currentSpineIndex);
     section = std::unique_ptr<Section>(new Section(epub, currentSpineIndex, renderer));
     partialRebuildStartFailed = false;
+    builtSpecSignature = readerRenderSpecSignature(renderSpec);
 
     const bool cacheLoaded = section->loadSectionFile(renderSpec);
     if (cacheLoaded) {
@@ -2306,6 +2335,17 @@ void EpubReaderActivity::renderStatusBar() const {
     if (statusBarHeight == 0 || statusBarHeight == UITheme::getInstance().getProgressBarHeight()) {
       textYOffset += UITheme::getInstance().getMetrics().statusBarVerticalMargin;
     }
+  } else if (runningHead && (overlay == Overlay::Float || overlay == Overlay::FloatMenu)) {
+    const int pagesLeft = std::max(0, static_cast<int>(pageCount) - currentPage);
+    char line[64];
+    if (pagesLeft == 0) {
+      snprintf(line, sizeof(line), "%s", tr(STR_LAST_PAGE_IN_CHAPTER));
+    } else if (pagesLeft == 1) {
+      snprintf(line, sizeof(line), "%s", tr(STR_ONE_PAGE_LEFT_IN_CHAPTER));
+    } else {
+      snprintf(line, sizeof(line), tr(STR_PAGES_LEFT_IN_CHAPTER), pagesLeft);
+    }
+    title = line;
   } else if (sb.titleMode == CrossPointSettings::STATUS_BAR_TITLE::CHAPTER_TITLE) {
     title = tr(STR_UNNAMED);
     if (epub) {
@@ -2319,8 +2359,49 @@ void EpubReaderActivity::renderStatusBar() const {
     title = epub ? epub->getTitle() : "";
   }
 
+  int bookPage = 0;
+  int bookPageCount = 0;
+  if (UITheme::getInstance().getMetrics().statusBarBookStyle) {
+    bookPageEstimate(currentPage, static_cast<int>(pageCount), bookPage, bookPageCount);
+  }
+  // While the float chrome is up the corner shows the book percent instead.
+  const bool floatUp = overlay == Overlay::Float || overlay == Overlay::FloatMenu;
   GUI.drawStatusBar(renderer, bookProgress, currentPage, pageCount, title, 0, textYOffset, true, currentPageBookmarked,
-                    section ? section->isBuilding() : false, runningHead);
+                    section ? section->isBuilding() : false, runningHead, bookPage, floatUp);
+}
+
+// Pages before this chapter and after it are estimated from the average bytes
+// per page of the chapters paginated so far; this chapter's own pages count
+// exactly, so each turn moves the number by one.
+void EpubReaderActivity::bookPageEstimate(const int currentPage, const int pageCount, int& bookPage,
+                                          int& bookPageCount) const {
+  bookPage = 0;
+  bookPageCount = 0;
+  if (!epub || !section || pageCount <= 0 || epub->getBookSize() == 0) return;
+  const int layoutKey = SETTINGS.getReaderFontId() ^ (SETTINGS.lineSpacing << 4) ^ (SETTINGS.screenMargin << 8) ^
+                        (renderer.getScreenWidth() << 12);
+  if (layoutKey != learnedLayoutKey) {
+    learnedLayoutKey = layoutKey;
+    learnedBytes = 0;
+    learnedPages = 0;
+    learnedSpine = -1;
+  }
+  const size_t before = currentSpineIndex >= 1 ? epub->getCumulativeSpineItemSize(currentSpineIndex - 1) : 0;
+  const size_t chapter = epub->getCumulativeSpineItemSize(currentSpineIndex) - before;
+  // Short chapters (title pages, images) say little about text density.
+  constexpr int kMinLearnPages = 4;
+  if (!section->isBuilding() && pageCount >= kMinLearnPages && learnedSpine != currentSpineIndex) {
+    learnedSpine = currentSpineIndex;
+    learnedBytes += static_cast<uint32_t>(chapter);
+    learnedPages += static_cast<uint32_t>(pageCount);
+  }
+  if (learnedPages == 0) return;
+  const float bytesPerPage = static_cast<float>(learnedBytes) / static_cast<float>(learnedPages);
+  const size_t after = epub->getBookSize() - before - chapter;
+  const int pagesBefore = static_cast<int>(static_cast<float>(before) / bytesPerPage + 0.5f);
+  const int pagesAfter = static_cast<int>(static_cast<float>(after) / bytesPerPage + 0.5f);
+  bookPage = pagesBefore + currentPage;
+  bookPageCount = pagesBefore + pageCount + pagesAfter;
 }
 
 // ---------------------------------------------------------------------------
@@ -2348,6 +2429,310 @@ bool EpubReaderActivity::usesToolbarMenu() const {
 }
 
 bool EpubReaderActivity::usesMenuSheet() { return UITheme::getInstance().getMetrics().readerMenuSheet; }
+
+bool EpubReaderActivity::usesFloatMenu() { return usesMenuSheet() && BoardConfig::hasTouch(); }
+
+EpubReaderActivity::Overlay EpubReaderActivity::rootOverlay() {
+  if (usesFloatMenu()) return Overlay::Float;
+  return usesMenuSheet() ? Overlay::Menu : Overlay::Toolbar;
+}
+
+namespace {
+constexpr int kFloatPillWidth = 370;
+}  // namespace
+
+EpubReaderActivity::FloatLayout EpubReaderActivity::floatLayout() const {
+  constexpr int kButton = float_ui::kReaderButton;
+  const int width = renderer.getScreenWidth();
+  const int height = renderer.getScreenHeight();
+  const int right = width - float_ui::kReaderMargin;
+  const int bottomY = height - float_ui::kReaderEdge - kButton;
+  FloatLayout layout;
+  layout.close = {right - kButton, float_ui::kReaderEdge, kButton, kButton};
+  layout.menu = {right - kButton, bottomY, kButton, kButton};
+  for (int i = 0; i < 3; i++) {
+    layout.round[i] = {right - (3 - i) * kButton - (2 - i) * float_ui::kGap, bottomY, kButton, kButton};
+  }
+  const int pillW = std::min(kFloatPillWidth, width - 2 * float_ui::kReaderMargin);
+  int pillY = bottomY - float_ui::kGap - kButton;
+  for (int i = 1; i >= 0; i--) {
+    layout.pills[i] = {right - pillW, pillY, pillW, kButton};
+    pillY -= kButton + float_ui::kGap;
+  }
+  return layout;
+}
+
+void EpubReaderActivity::renderFloat() {
+  if (UITheme::getStatusBarTopHeight(renderer) > 0) {
+    // The running head shows the pages left in the chapter while the chrome is up.
+    int marginTop, marginRight, marginBottom, marginLeft;
+    renderer.getOrientedViewableTRBL(&marginTop, &marginRight, &marginBottom, &marginLeft);
+    renderer.fillRect(0, 0, renderer.getScreenWidth(), marginTop + UITheme::getStatusBarTopHeight(renderer), false);
+    renderStatusBar();
+  }
+  constexpr auto fill = float_ui::kReaderFill;
+  const FloatLayout layout = floatLayout();
+  if (overlay == Overlay::Float) {
+    float_ui::drawRound(renderer, layout.close, icon_float_close_28, fill);
+    float_ui::drawRound(renderer, layout.menu, icon_float_menu_28, fill);
+    return;
+  }
+  const int font = readerChromeSansFontId();
+  const int lineHeight = renderer.getLineHeight(font);
+  std::string contents = std::string(tr(STR_TOOL_CONTENTS)) + " \u00B7 " +
+                         std::to_string(bookPercentFor(chapterPosition())) + "%";
+  const char* labels[2] = {contents.c_str(), tr(STR_TEXT)};
+  const freeink::Icon* icons[2] = {&icon_float_contents_28, &icon_float_text_28};
+  for (int i = 0; i < 2; i++) {
+    const float_ui::Box& pill = layout.pills[i];
+    float_ui::drawShape(renderer, pill.x, pill.y, pill.w, pill.h, fill);
+    const int iconX = pill.x + pill.w - 32 - icons[i]->w;
+    const auto label = renderer.truncatedText(font, labels[i], iconX - pill.x - 48);
+    float_ui::drawLabel(renderer, font, pill.x + 32, pill.y + (pill.h - lineHeight) / 2, label.c_str(), fill);
+    float_ui::drawIcon(renderer, *icons[i], iconX, pill.y + (pill.h - icons[i]->h) / 2, float_ui::inkOn(fill),
+                       fill == float_ui::Fill::Dither);
+  }
+  float_ui::drawRound(renderer, layout.round[0], icon_float_share_28, fill);
+  float_ui::drawRound(renderer, layout.round[1], icon_float_rotate_28, fill);
+  float_ui::drawRound(renderer, layout.round[2], currentPageBookmarked ? icon_float_bookmarked_28 : icon_float_bookmark_28,
+                      fill);
+}
+
+void EpubReaderActivity::runFloatAction(const EpubReaderMenuActivity::MenuAction action) {
+  {
+    RenderLock lock;  // the actions launch screens that paint the framebuffer
+    settleOverlayRefresh();
+  }
+  contentsAnchorY = -1;
+  if (action == EpubReaderMenuActivity::MenuAction::TEXT_SETTINGS) {
+    textSettingsSheetTop = renderer.getScreenHeight() / 4;
+  }
+  runLeafMenuAction(action);
+}
+
+void EpubReaderActivity::handleFloatInput() {
+  using MA = EpubReaderMenuActivity::MenuAction;
+  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+    closeOverlayToPage();
+    return;
+  }
+  if (overlay == Overlay::Float && mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    openOverlay(Overlay::FloatMenu);
+    return;
+  }
+  int x = 0;
+  int y = 0;
+  if (!mappedInput.wasScreenTapped(x, y)) return;
+  haptic_feedback::touchAction();
+  const FloatLayout layout = floatLayout();
+  if (overlay == Overlay::Float) {
+    if (layout.close.contains(x, y)) {
+      runFloatAction(MA::GO_HOME);
+    } else if (layout.menu.contains(x, y)) {
+      openOverlay(Overlay::FloatMenu);
+    } else {
+      closeOverlayToPage();
+    }
+    return;
+  }
+  if (layout.pills[0].contains(x, y)) {
+    openOverlay(Overlay::FloatContents);
+    return;
+  }
+  if (layout.pills[1].contains(x, y)) {
+    runFloatAction(MA::TEXT_SETTINGS);
+    return;
+  }
+  if (layout.round[0].contains(x, y)) {
+    runFloatAction(MA::DISPLAY_QR);
+  } else if (layout.round[1].contains(x, y)) {
+    // Portrait <-> landscape; the stored page is laid out for the old one.
+    {
+      RenderLock lock;
+      settleOverlayRefresh();
+    }
+    overlay = Overlay::None;
+    toolbarUi.reset();
+    discardOverlayPage();
+    applyOrientation(SETTINGS.orientation == CrossPointSettings::PORTRAIT ? CrossPointSettings::LANDSCAPE_CW
+                                                                          : CrossPointSettings::PORTRAIT);
+    requestUpdate();
+  } else if (layout.round[2].contains(x, y)) {
+    runFloatAction(MA::TOGGLE_BOOKMARK);
+  } else {
+    closeOverlayToPage();
+  }
+}
+
+namespace {
+constexpr int kContentsCoverW = 80;
+constexpr int kContentsCoverH = 128;
+constexpr int kContentsIndent = 18;     // per TOC level below the first
+constexpr int kContentsMarkWidth = 34;  // gutter for the selection asterisk
+}  // namespace
+
+int EpubReaderActivity::floatContentsListY() const {
+  return float_ui::kReaderEdge + kContentsCoverH + 24;
+}
+
+int EpubReaderActivity::floatContentsRowHeight() const {
+  return std::max(41, renderer.getLineHeight(SETTINGS.getReaderFontId()) + 10);
+}
+
+int EpubReaderActivity::floatContentsRows() const {
+  const int listH = renderer.getScreenHeight() - float_ui::kReaderEdge - floatContentsListY();
+  return std::max(1, listH / floatContentsRowHeight());
+}
+
+void EpubReaderActivity::renderFloatContents() {
+  const int width = renderer.getScreenWidth();
+  const int margin = float_ui::kReaderMargin;
+  const int font = SETTINGS.getReaderFontId();
+  const int lineHeight = renderer.getLineHeight(font);
+  renderer.clearScreen();
+
+  // Header: cover, then title and the book page beside it.
+  const int coverY = float_ui::kReaderEdge;
+  const std::string thumbPath = epub->getThumbBmpPath(kContentsCoverH);
+  if (!Storage.exists(thumbPath.c_str())) epub->generateThumbBmp(kContentsCoverH);
+  bool coverDrawn = false;
+  HalFile file;
+  if (Storage.openFileForRead("TOC", thumbPath, file)) {
+    Bitmap bitmap(file);
+    if (bitmap.parseHeaders() == BmpReaderError::Ok) {
+      coverDrawn = BaseTheme::drawCoverThumbFill(renderer, bitmap, Rect(margin, coverY, kContentsCoverW, kContentsCoverH));
+    }
+    file.close();
+  }
+  if (!coverDrawn) renderer.drawRect(margin, coverY, kContentsCoverW, kContentsCoverH);
+
+  const FloatLayout layout = floatLayout();
+  const int textX = margin + kContentsCoverW + 17;
+  const int textW = layout.close.x - 16 - textX;
+  const auto titleLines = renderer.wrappedText(font, epub->getTitle().c_str(), textW, 2, EpdFontFamily::BOLD);
+  int textY = coverY;
+  for (const auto& line : titleLines) {
+    renderer.drawText(font, textX, textY, line.c_str(), true, EpdFontFamily::BOLD);
+    textY += lineHeight;
+  }
+  if (section) {
+    int bookPage = 0;
+    int bookPageCount = 0;
+    bookPageEstimate(section->currentPage, section->estimatedTotalPages(), bookPage, bookPageCount);
+    if (bookPage > 0 && bookPageCount > 0) {
+      char line[48];
+      snprintf(line, sizeof(line), tr(STR_PAGE_X_OF_Y), bookPage, bookPageCount);
+      renderer.drawText(font, textX, textY + 4, line, true, EpdFontFamily::ITALIC);
+    }
+  }
+  float_ui::drawRound(renderer, layout.close, icon_float_close_28, float_ui::kReaderFill);
+
+  // TOC rows; the current chapter is outlined.
+  const int count = epub->getTocItemsCount();
+  const int current = epub->getTocIndexForSpineIndex(currentSpineIndex);
+  const int rowH = floatContentsRowHeight();
+  const int rows = floatContentsRows();
+  const int listY = floatContentsListY();
+  for (int r = 0; r < rows && floatContentsTop + r < count; r++) {
+    const int i = floatContentsTop + r;
+    const auto item = epub->getTocItem(i);
+    const int y = listY + r * rowH;
+    const int indent = item.level > 1 ? (item.level - 1) * kContentsIndent : 0;
+    const int x = margin + kContentsMarkWidth + indent;
+    const auto label = renderer.truncatedText(font, item.title.c_str(), width - margin - x);
+    const int lineTop = y + (rowH - lineHeight) / 2;
+    if (i == current) {
+      // The Pulp list selection: a pencil asterisk in the gutter, the title underlined.
+      const auto plot = [this](const int px, const int py) { renderer.drawPixel(px, py); };
+      const int size = std::max(14, lineHeight * 3 / 4);
+      const int cx = margin + kContentsMarkWidth / 2 - 2;
+      freeink::ui::pencilAsterisk(
+          freeink::ui::Rect{static_cast<int16_t>(cx - size / 2), static_cast<int16_t>(y + rowH / 2 - size / 2),
+                            static_cast<int16_t>(size), static_cast<int16_t>(size)},
+          0x2545F491u ^ static_cast<uint32_t>(i) * 2654435761u, plot);
+      uint32_t seed = 2166136261u;
+      for (const char c : label) seed = (seed ^ static_cast<uint8_t>(c)) * 16777619u;
+      const int reach = lineHeight / 8;
+      const int gap = std::max(5, lineHeight / 6);
+      const int thickness = std::clamp(lineHeight / 10 + 1, 3, 5);
+      freeink::ui::pencilStroke(
+          freeink::ui::Rect{static_cast<int16_t>(x - reach),
+                            static_cast<int16_t>(lineTop + renderer.getFontAscenderSize(font) + gap),
+                            static_cast<int16_t>(renderer.getTextWidth(font, label.c_str()) + 2 * reach),
+                            static_cast<int16_t>(thickness)},
+          seed, plot);
+    }
+    renderer.drawText(font, x, lineTop, label.c_str());
+  }
+}
+
+void EpubReaderActivity::handleFloatContentsInput() {
+  const auto redraw = [this] {
+    RenderLock lock;
+    settleOverlayRefresh();
+    renderOverlay();
+    pushOverlayRefresh();
+  };
+  const int count = epub->getTocItemsCount();
+  const int rows = floatContentsRows();
+  const auto scroll = [&](const int dir) {
+    const int top = std::clamp(floatContentsTop + dir * rows, 0, std::max(0, count - rows));
+    if (top == floatContentsTop) return;
+    floatContentsTop = top;
+    redraw();
+  };
+  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+    closeOverlayToPage();
+    return;
+  }
+  if (mappedInput.wasReleased(MappedInputManager::Button::Down) ||
+      mappedInput.wasReleased(MappedInputManager::Button::Right)) {
+    scroll(1);
+    return;
+  }
+  if (mappedInput.wasReleased(MappedInputManager::Button::Up) ||
+      mappedInput.wasReleased(MappedInputManager::Button::Left)) {
+    scroll(-1);
+    return;
+  }
+  using Swipe = MappedInputManager::SwipeDir;
+  const Swipe swipe = mappedInput.wasSwipe();
+  if (swipe == Swipe::Up || swipe == Swipe::Left) {
+    scroll(1);
+    return;
+  }
+  if (swipe == Swipe::Down || swipe == Swipe::Right) {
+    scroll(-1);
+    return;
+  }
+  int x = 0;
+  int y = 0;
+  if (!mappedInput.wasScreenTapped(x, y)) return;
+  haptic_feedback::touchAction();
+  if (floatLayout().close.contains(x, y)) {
+    closeOverlayToPage();
+    return;
+  }
+  const int listY = floatContentsListY();
+  if (y < listY) return;
+  const int i = floatContentsTop + (y - listY) / floatContentsRowHeight();
+  if (i >= count || (y - listY) / floatContentsRowHeight() >= rows) return;
+  const auto item = epub->getTocItem(i);
+  if (item.spineIndex == -1) return;
+  {
+    RenderLock lock;
+    settleOverlayRefresh();
+    clearDeferredReposition();
+    currentSpineIndex = item.spineIndex;
+    pendingAnchor = item.anchor;
+    nextPageNumber = 0;
+    section.reset();
+  }
+  overlay = Overlay::None;
+  toolbarUi.reset();
+  discardOverlayPage();
+  requestUpdate();
+}
 
 std::string EpubReaderActivity::currentChapterTitle() const {
   if (!epub) return "";
@@ -2482,6 +2867,10 @@ void EpubReaderActivity::openOverlay(Overlay target) {
       panelIndex = 0;
       toolbarUi->nav().reset();
       break;
+    case Overlay::FloatContents:
+      // Open with the current chapter a couple of rows down from the top.
+      floatContentsTop = std::max(0, epub->getTocIndexForSpineIndex(currentSpineIndex) - 2);
+      break;
     case Overlay::More:
       panelIndex = 0;
       buildMoreActions();
@@ -2557,6 +2946,14 @@ void EpubReaderActivity::closeOverlayToPage() {
 
 void EpubReaderActivity::renderOverlay() {
   if (!epub || !section || !toolbarUi) return;
+  if (overlay == Overlay::FloatContents) {
+    renderFloatContents();
+    return;
+  }
+  if (overlay == Overlay::Float || overlay == Overlay::FloatMenu) {
+    renderFloat();
+    return;
+  }
 
   ReaderToolbarUi::Model model;
   // The toolbar's tool pill is the button-navigation cursor: tap-first (same
@@ -2693,6 +3090,14 @@ void EpubReaderActivity::handleOverlayInput() {
         requestUpdate();
       }
     });
+    return;
+  }
+  if (overlay == Overlay::FloatContents) {
+    handleFloatContentsInput();
+    return;
+  }
+  if (overlay == Overlay::Float || overlay == Overlay::FloatMenu) {
+    handleFloatInput();
     return;
   }
   const auto fastRedraw = [this] {
@@ -3110,7 +3515,8 @@ void EpubReaderActivity::activateMenuSheetRow(const int row) {
                           : -1;
   }
   if (toolbarUi && action == EpubReaderMenuActivity::MenuAction::TEXT_SETTINGS) {
-    textSettingsSheetTop = toolbarUi->menuSheetTop();
+    // Three-quarter sheet: room for every row, with the page preview above it.
+    textSettingsSheetTop = renderer.getScreenHeight() / 4;
   }
   runLeafMenuAction(action);
 }

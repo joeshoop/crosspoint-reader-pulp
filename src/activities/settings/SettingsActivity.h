@@ -29,6 +29,8 @@ enum class SettingAction {
   Plugins,
   KeyboardLayouts,
   HomeButton,
+  RefreshTest,
+  TapTargetTest,
   About,
 };
 
@@ -173,6 +175,7 @@ struct SettingInfo {
 };
 
 class SettingsActivity final : public UiTabListActivity {
+  bool returnOnBack = false;
   int selectedCategoryIndex = 0;  // Currently selected category
   int settingsCount = 0;
 
@@ -239,7 +242,9 @@ class SettingsActivity final : public UiTabListActivity {
   void drawFooter() override;
 
  public:
-  explicit SettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput);
+  // returnOnBack: opened over another screen (the control center), so Back
+  // finishes back to it instead of going Home.
+  explicit SettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool returnOnBack = false);
   void onEnter() override;
   void onExit() override;
   void render(RenderLock&& lock) override;

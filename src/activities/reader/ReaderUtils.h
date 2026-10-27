@@ -142,15 +142,19 @@ inline TouchPageTurn detectTouchPageTurn(const GfxRenderer& renderer, const Mapp
 
 // Tap in the center third of the screen: the tap path into the reader menu on
 // every touch board. detectTouchPageTurn() excludes this centered rectangle,
-// so it remains free in tap mode. The Off/Swipe Up
-// alternatives are only surfaced on home-key boards (SettingsList), where the
-// menu stays reachable through the key's long-press function.
+// so it remains free in tap mode. When no tap turns a page (swipe-only page
+// turns, or touch page turns off) a tap anywhere opens the menu. The Off/Swipe
+// Up alternatives are only surfaced on home-key boards (SettingsList), where
+// the menu stays reachable through the key's long-press function.
 inline bool isTouchMenuTap(const GfxRenderer& renderer, const MappedInputManager& input) {
   if (!input.hasTouch()) return false;
   if (SETTINGS.showReaderMenu != CrossPointSettings::READER_MENU_TAP) return false;
   int x = 0;
   int y = 0;
   if (!input.wasScreenTapped(x, y)) return false;
+  const bool tapsTurnPages = SETTINGS.touchReaderControls && (gestureAllowsTap(SETTINGS.pageTurnGesture) ||
+                                                              gestureAllowsTap(SETTINGS.previousPageGesture));
+  if (!tapsTurnPages) return true;
   const int width = renderer.getScreenWidth();
   const int height = renderer.getScreenHeight();
   const int zoneWidth = width / 3;

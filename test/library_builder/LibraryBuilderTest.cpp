@@ -400,3 +400,42 @@ TEST_F(LibraryBuilderTest, SortAllocationFailureProducesValidDegradedIndex) {
   ASSERT_TRUE(index.open(INDEX));
   EXPECT_EQ(index.bookCount(), 513);
 }
+
+TEST_F(LibraryBuilderTest, SeriesOrderGroupsSeriesInReadingOrderThenStandaloneByTitle) {
+  fake::add("/c.epub");
+  fake::add("/d.epub");
+  bookMetadata["/a.epub"] = {"The Two Towers", "J. R. R. Tolkien", "The Lord of the Rings", 2.0f};
+  bookMetadata["/b.epub"] = {"Alone", "Someone", "", std::nullopt};
+  bookMetadata["/c.epub"] = {"The Fellowship of the Ring", "J. R. R. Tolkien", "The Lord of the Rings", 1.0f};
+  bookMetadata["/d.epub"] = {"An Interlude", "J. R. R. Tolkien", "The Lord of the Rings", 1.5f};
+  initial();
+
+  const auto seriesRows = [] {
+    LibraryIndexFile index;
+    std::vector<std::string> rows;
+    if (!index.open(INDEX)) return rows;
+    for (uint16_t row = 0; row < index.bookCount(); row++) {
+      ClixRecord record{};
+      std::string title, series, position;
+      const uint16_t ordinal = index.ordinalForRow(SortOrder::SeriesAsc, row);
+      if (!index.readRecord(ordinal, record) || !index.readTitle(record, title) || !index.readSeries(record, series) ||
+          !index.readSeriesPosition(record, position))
+        return std::vector<std::string>{};
+      rows.push_back(title + "|" + series + "|" + position);
+    }
+    return rows;
+  };
+  const std::vector<std::string> expected = {
+      "The Fellowship of the Ring|The Lord of the Rings|1",
+      "An Interlude|The Lord of the Rings|1.5",
+      "The Two Towers|The Lord of the Rings|2",
+      "Alone||",
+  };
+  EXPECT_EQ(seriesRows(), expected);
+
+  // Reused metadata keeps the series.
+  fake::parses = 0;
+  ASSERT_TRUE(buildLibraryIndex("/", stats, true));
+  EXPECT_EQ(fake::parses, 0u);
+  EXPECT_EQ(seriesRows(), expected);
+}

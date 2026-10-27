@@ -9,6 +9,27 @@ UiAppHost::UiAppHost(const GfxRenderer& renderer)
   boundBodyFontId = uiScaleSpec().bodyFontId;
 }
 
+int UiAppHost::wantedBodyFontId() const {
+  return sansChrome ? readerChromeSansFontId() : uiScaleSpec().bodyFontId;
+}
+
+void UiAppHost::bindFonts() {
+  if (sansChrome) {
+    const int sans = readerChromeSansFontId();
+    uiTarget.setFont(fui::GfxRendererTarget::FONT_SMALL, sans);
+    uiTarget.setFont(fui::GfxRendererTarget::FONT_BODY, sans);
+    uiTarget.setFont(fui::GfxRendererTarget::FONT_TITLE, sans);
+  } else {
+    bindUiFonts(uiTarget);
+  }
+  boundBodyFontId = wantedBodyFontId();
+}
+
+void UiAppHost::useSansChrome() {
+  sansChrome = true;
+  bindFonts();
+}
+
 void UiAppHost::resetUi() {
   uiReady = false;
   applySharedUiTheme(app, uiTarget);
@@ -16,10 +37,8 @@ void UiAppHost::resetUi() {
 
 void UiAppHost::renderUi() {
   // The old font may already be unloaded, so a stale binding would draw no text.
-  const int bodyFontId = uiScaleSpec().bodyFontId;
-  if (bodyFontId != boundBodyFontId) {
-    bindUiFonts(uiTarget);
-    boundBodyFontId = bodyFontId;
+  if (wantedBodyFontId() != boundBodyFontId) {
+    bindFonts();
     applySharedUiTheme(app, uiTarget);  // row heights follow the new line height
   }
   app.setDevice(uiTarget.deviceContext());

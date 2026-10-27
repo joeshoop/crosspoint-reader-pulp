@@ -32,9 +32,17 @@
 // indexed book so an allocation failure remains recoverable on the C3.
 class LibraryListActivity final : public UiTabListActivity {
  public:
-  LibraryListActivity(GfxRenderer& renderer, MappedInputManager& mappedInput);
+  // asHome: built by goHome() on boards where the shelf is Home.
+  LibraryListActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool asHome = false);
 
   void onEnter() override;
+  bool isHomeActivity() const override { return isHome(); }
+  // Touch boards with a shelf-grid theme (Pulp): the Books shelf, with the
+  // recent covers on top and Settings in the header, replaces the Home menu.
+  static bool shelfIsHome();
+  // This instance is Home: recent covers, a Books row, float buttons. The Books
+  // screen it opens is the same shelf with File Transfer in that row instead.
+  bool isHome() const { return asHome && shelfIsHome(); }
   void onExit() override;
 
  protected:
@@ -52,10 +60,9 @@ class LibraryListActivity final : public UiTabListActivity {
   bool handleCustomInput() override;
   bool handleButtons() override;
   void navigateButtons() override;
-  // Shelf sections: File Transfer, Recent, On This Device.
-  bool rowStartsSection(int row) const override {
-    return row == 0 || (bookShelf() && (row == shelfCoverCount() || row == shelfRows()));
-  }
+  // Shelf sections: covers, File Transfer, the sort row, and each letter or
+  // author group of the books.
+  bool rowStartsSection(int row) const override;
   // The FreeInkUI header owns both the title and search touch target.
   void drawChrome() override {}
   void drawFooter() override;
@@ -115,6 +122,8 @@ class LibraryListActivity final : public UiTabListActivity {
   // fileName, when asked for, is the on-card name the row's icon derives from
   // (the display title may come from metadata and carry no extension).
   bool rowTextFor(int entry, std::string& title, std::string& author, std::string* fileName = nullptr);
+  // The row's series and its position in it; both empty for a book in none.
+  void seriesFor(int entry, std::string& series, std::string& position);
   uint32_t titleInitialFor(int entry);
   bool buildGroupStarts();
   int groupForBook(int bookEntry) const;
@@ -136,12 +145,58 @@ class LibraryListActivity final : public UiTabListActivity {
   bool tabsFocused() const { return ringPos() == 0; }
 
   // --- Books shelf (themes with libraryBookShelf) -----------------------------
-  // No strip, always sorted by title. The leading rows are the recent-book
-  // covers (themes with shelfCoverHeight, else none) and File Transfer; the
-  // card's books follow. shelfRows() is that leading row count.
+  // No strip: the "On This Device" row picks the order (SETTINGS.librarySort).
+  // The leading rows are the recent-book covers (themes with shelfCoverHeight,
+  // else none), File Transfer, and that sort row; the card's books follow.
+  // shelfRows() is that leading row count.
   static bool bookShelf();
-  int shelfRows() const { return bookShelf() ? shelfCoverCount() + 1 : 0; }
-  bool onFileTransferRow() const { return bookShelf() && ringPos() - 1 == shelfCoverCount(); }
+  int shelfRows() const { return bookShelf() ? shelfCoverCount() + shelfLeadRows() : 0; }
+  // File Transfer and the sort row; touch Books has neither (spineShelf()).
+  int shelfLeadRows() const { return spineShelf() ? 0 : 2; }
+  const char* menuRowLabel() const;
+  bool onFileTransferRow() const { return shelfLeadRows() > 0 && bookShelf() && ringPos() - 1 == shelfCoverCount(); }
+  bool onSortRow() const { return shelfLeadRows() > 0 && bookShelf() && ringPos() - 1 == shelfCoverCount() + 1; }
+  // Applies SETTINGS.librarySort to sortOrder.
+  void applyShelfSort();
+  void cycleShelfSort();
+  // The sort picker, opened by the sort row.
+  void showSortPicker();
+
+  // --- touch Books: book spines -----------------------------------------------
+  // Each book a ruled row, title left and author right in italics, under the
+  // sort's name as a pill button (the sort picker) and round File Transfer
+  // and close buttons.
+  bool spineShelf() const { return shelfIsHome() && !isHome(); }
+  // ACTION_GRID values (the app host has room for few handlers).
+  static constexpr int16_t kSpineSort = 1000;
+  static constexpr int16_t kSpineClose = 1001;
+  static constexpr int16_t kSpineTransfer = 1002;
+  int spineContentTop() const;
+  void buildSpineHeader(UiScreen& screen);
+  void onSpineAction(int16_t value);
+
+  // --- touch Home: the recent books, and the way to the shelf ----------------
+  // The latest reads as shelf books, two to a row, over a round button for
+  // the shelf. ACTION_GRID values: the book's index, or kGridBooks.
+  static constexpr freeink::ui::ActionId ACTION_GRID = ACTION_BACK + 1;
+  static constexpr int16_t kGridBooks = 998;
+  static constexpr int kHomeTop = 30;            // first row of books
+  static constexpr int kHomeButtonsBottom = 38;  // button to the screen's foot
+  static constexpr int kHomeButtonsGap = 10;     // books to the button
+  static constexpr int kHomeMinGap = 24;         // least space beside a book
+  static constexpr int kLowBadgeTop = 1;         // low battery, in the band above Home and Books
+  int homeButtonsTop() const;
+  // One row of books, selection room included; the covers shrink to fit two.
+  int homeCellHeight() const;
+  int homeCoverHeight() const;
+  static constexpr int kHomeCovers = 4;
+  bool pathForEntry(int entry, std::string& path);
+  void buildHome(UiScreen& screen);
+  bool handleHomeInput();
+  static void gridActionTrampoline(const freeink::ui::ActionEvent& event, void* user);
+  // A held side button: on to the next group, or back to this group's start
+  // (the previous one when already there).
+  void jumpShelfSection(int direction, int count);
   // The cover at the selection, or -1.
   int selectedCover() const { return ringPos() - 1 < shelfCoverCount() ? ringPos() - 1 : -1; }
   void buildShelfRows(UiScreen& screen);
@@ -150,14 +205,22 @@ class LibraryListActivity final : public UiTabListActivity {
   // Up to kShelfCovers recent books as covers, then File Transfer and the "On
   // This Device" heading on the same page; the selection moving on to the
   // books hands over to the full list.
+  // Button boards show the recent covers on Home, so File Transfer leads the
+  // list. On touch boards this screen is Home (isHome) and keeps them.
   static constexpr int kShelfCovers = 4;
+  bool asHome = false;
+  int shelfCoverLimit() const { return isHome() ? kHomeCovers : 0; }
   int shelfCoverCount() const { return static_cast<int>(shelfBooks.size()); }
-  bool shelfCoverView() const { return shelfCoverCount() > 0 && ringPos() - 1 <= shelfCoverCount(); }
+  bool shelfCoverView() const { return shelfCoverCount() > 0 && ringPos() - 1 <= shelfCoverCount() + 1; }
   // Copies the leading store books, keeping known cover paths.
   void syncShelfBooks();
   // Side buttons in the grid move a row (two covers); true when handled.
   bool stepShelfGridRow();
-  void drawShelfHeading(UiScreen& screen, int16_t rowHeight) const;
+  // "On This Device · by Title": the sort row, drawn as a heading.
+  void drawShelfHeading(UiScreen& screen, int16_t rowHeight, bool selected);
+  const char* shelfHeadingText();
+  // The sort order alone: "by Title".
+  static const char* shelfOrderText();
   void buildShelfCovers(UiScreen& screen);
   void fillShelfWindow(freeink::ui::ListProps& props, int visibleRows);
   void showBookOptions(const std::string& path, const std::string& title, bool isStoreRow);
@@ -210,6 +273,9 @@ class LibraryListActivity final : public UiTabListActivity {
   std::vector<std::string> winTitles;
   std::vector<std::string> winAuthors;
   std::vector<std::string> winHeaders;
+  // Shelf rows only: each book's series, and its second line.
+  std::vector<std::string> winSeries;
+  std::vector<std::string> winSubtitles;
 
   // Pinned overlay state: per store entry its RecentAsc row (0xFFFF when the
   // book is not in the index), and the current-direction rows to skip, sorted
@@ -230,6 +296,11 @@ class LibraryListActivity final : public UiTabListActivity {
   bool lockNextBackRelease = false;
   bool reconcilePending = false;
   bool thumbsPending = false;
+  // The shelf's group map is built after the paint, for the side-button jumps.
+  bool groupsPending = false;
+  // The shelf order changed; saved on exit, once the index is closed.
+  bool sortDirty = false;
+  std::string shelfHeading;
   // Set by the render task once the list is on screen.
   std::atomic<bool> painted{false};
 

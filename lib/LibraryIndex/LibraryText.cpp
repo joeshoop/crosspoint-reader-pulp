@@ -398,4 +398,33 @@ std::string surnameKey(const std::string_view displayAuthor) {
   return key;
 }
 
+// Integer arithmetic only: the C3's printf has no float support.
+std::string formatSeriesPosition(const float position) {
+  if (!(position >= 0.0f) || position > 600.0f) return std::string();
+  const long hundredths = static_cast<long>(position * 100.0f + 0.5f);
+  std::string out = std::to_string(hundredths / 100);
+  const long fraction = hundredths % 100;
+  if (fraction != 0) {
+    out.push_back('.');
+    out.push_back(static_cast<char>('0' + fraction / 10));
+    if (fraction % 10 != 0) out.push_back(static_cast<char>('0' + fraction % 10));
+  }
+  return out;
+}
+
+uint16_t seriesPositionRank(const std::string_view text) {
+  if (text.empty()) return 0xFFFF;
+  uint32_t whole = 0;
+  size_t i = 0;
+  for (; i < text.size() && text[i] >= '0' && text[i] <= '9'; i++) whole = whole * 10 + (text[i] - '0');
+  uint32_t fraction = 0;
+  if (i < text.size() && text[i] == '.') {
+    uint32_t scale = 10;
+    for (i++; i < text.size() && text[i] >= '0' && text[i] <= '9' && scale > 0; i++, scale /= 10) {
+      fraction += (text[i] - '0') * scale;
+    }
+  }
+  return static_cast<uint16_t>(std::min<uint32_t>(whole * 100 + fraction, 0xFFFE));
+}
+
 }  // namespace library

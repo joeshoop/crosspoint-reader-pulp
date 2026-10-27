@@ -15,6 +15,8 @@
 #include <iterator>
 
 #include "AboutActivity.h"
+#include "RefreshTestActivity.h"
+#include "TapTargetTestActivity.h"
 #include "ButtonRemapActivity.h"
 #include "ClearCacheActivity.h"
 #include "ClockSettingsActivity.h"
@@ -51,8 +53,8 @@ constexpr StrId kListHeadings[] = {StrId::STR_CAT_READER, StrId::STR_CAT_DISPLAY
                                    StrId::STR_CAT_SYSTEM};
 }  // namespace
 
-SettingsActivity::SettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-    : UiTabListActivity("Settings", renderer, mappedInput) {}
+SettingsActivity::SettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const bool returnOnBack)
+    : UiTabListActivity("Settings", renderer, mappedInput), returnOnBack(returnOnBack) {}
 
 void SettingsActivity::rebuildSettingsLists() {
   displaySettings.clear();
@@ -120,6 +122,10 @@ void SettingsActivity::rebuildSettingsLists() {
   systemSettings.push_back(SettingInfo::Action(StrId::STR_SD_FIRMWARE_UPDATE, SettingAction::SdFirmwareUpdate));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_PLUGINS, SettingAction::Plugins));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_KEYBOARD_LAYOUTS, SettingAction::KeyboardLayouts));
+  systemSettings.push_back(SettingInfo::Action(StrId::STR_REFRESH_TEST, SettingAction::RefreshTest));
+  if (BoardConfig::hasTouch()) {
+    systemSettings.push_back(SettingInfo::Action(StrId::STR_TAP_TARGET_TEST, SettingAction::TapTargetTest));
+  }
   systemSettings.push_back(SettingInfo::Action(StrId::STR_ABOUT, SettingAction::About));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_LANGUAGE, SettingAction::Language));
   readerSettings.insert(readerSettings.begin(),
@@ -319,7 +325,10 @@ bool SettingsActivity::handleButtons() {
   }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-    if (usesSingleList()) {
+    if (returnOnBack) {
+      SETTINGS.saveToFile();
+      finish();
+    } else if (usesSingleList()) {
       SETTINGS.saveToFile();
       onGoHome();
     } else if (ring() > 0) {
@@ -511,6 +520,20 @@ void SettingsActivity::toggleCurrentSetting() {
           startActivityForResult(std::move(activity), nullptr);
         } else {
           LOG_ERR("SETTINGS", "OOM: KeyboardLayoutsActivity");
+        }
+        break;
+      case SettingAction::RefreshTest:
+        if (auto activity = makeUniqueNoThrow<RefreshTestActivity>(renderer, mappedInput)) {
+          startActivityForResult(std::move(activity), nullptr);
+        } else {
+          LOG_ERR("SETTINGS", "OOM: RefreshTestActivity");
+        }
+        break;
+      case SettingAction::TapTargetTest:
+        if (auto activity = makeUniqueNoThrow<TapTargetTestActivity>(renderer, mappedInput)) {
+          startActivityForResult(std::move(activity), nullptr);
+        } else {
+          LOG_ERR("SETTINGS", "OOM: TapTargetTestActivity");
         }
         break;
       case SettingAction::About:

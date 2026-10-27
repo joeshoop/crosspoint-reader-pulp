@@ -61,18 +61,29 @@ class TextSettingsActivity final : public UiTabListActivity {
   bool handleButtons() override;
   bool handleCustomInput() override;
   void navigateButtons() override;
-  bool rowStartsSection(int row) const override { return row == 0 || row == kLayoutStart || row == kStyleStart; }
+  bool rowStartsSection(int row) const override;
 
-  // Single-list themes (settingsSingleList): no tab bar; one list of Font,
-  // Size, then the Layout and Style rows, each stepping its value in place.
+  // Single-list themes (settingsSingleList): no tab bar; one list of rows,
+  // each stepping its value in place. On touch boards the list is split in
+  // two pages: the everyday rows plus links (Main), and the finer type
+  // settings (Typography). Button boards keep one list of every row.
   static bool usesSingleList();
-  static constexpr int kFontRow = 0;
-  static constexpr int kSizeRow = 1;
-  static constexpr int kLayoutStart = 2;
-  static constexpr int kStyleStart = kLayoutStart + static_cast<int>(LayoutRow::Count);
-  static constexpr int kSingleListCount = kStyleStart + static_cast<int>(StyleRow::Count);
+  enum class Page : uint8_t { All, Main, Typography };
+  // A single-list row: what it edits. Layout and Style rows carry their
+  // LayoutRow/StyleRow in `index`.
+  enum class RowKind : uint8_t { Font, Size, Layout, Style, Images, TypographyLink, StatusBarLink, ManageFontsLink };
+  struct SingleRow {
+    RowKind kind;
+    uint8_t index;
+  };
+  Page page_ = Page::All;
+  std::vector<SingleRow> singleRows_;
+  void rebuildSingleRows();
+  void showPage(Page page);
   void buildSingleList(UiScreen& screen);
   void activateSingleListRow(int row);
+  // Reloads the font list after Manage Fonts may have added or removed families.
+  void reloadFonts();
 
   // Sheet mode: the page above the sheet stays as the reader drew it until a
   // setting changes its text, then the preview redraws it in the reader's text box.

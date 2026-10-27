@@ -285,3 +285,13 @@ TEST(LibraryPath, RootDoesNotGainASecondSeparator) {
 TEST(LibraryPath, NestedFolderGetsOneSeparator) {
   EXPECT_EQ(library::joinLibraryPath("/Books", "book.epub"), "/Books/book.epub");
 }
+
+TEST(LibraryTextSeries, SeriesPositionsFormatAndRank) {
+  EXPECT_EQ(library::formatSeriesPosition(2.0f), "2");
+  EXPECT_EQ(library::formatSeriesPosition(2.5f), "2.5");
+  EXPECT_EQ(library::formatSeriesPosition(2.25f), "2.25");
+  EXPECT_EQ(library::formatSeriesPosition(-1.0f), "");
+  EXPECT_LT(library::seriesPositionRank("1"), library::seriesPositionRank("1.5"));
+  EXPECT_LT(library::seriesPositionRank("1.5"), library::seriesPositionRank("10"));
+  EXPECT_EQ(library::seriesPositionRank(""), 0xFFFF);
+}

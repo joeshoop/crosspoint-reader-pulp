@@ -66,6 +66,11 @@ class UiAppHost {
   // Close the routing gate outside a render, e.g. when the data the
   // interaction table indexes is released mid-state. Reopens on renderUi().
   void closeRouting() { uiReady = false; }
+
+  // Overlay chrome over the book (the reader's Themes & Settings sheet): set
+  // every font slot in the sans chrome face instead of the theme's UI font.
+  // Call before resetUi().
+  void useSansChrome();
   bool routingReady() const { return uiReady.load(); }
 
   freeink::ui::GfxRendererTarget uiTarget;  // must precede `app`: the app holds a reference to it
@@ -78,4 +83,7 @@ class UiAppHost {
   // Body font the target was last bound to. Themes that set the UI in the
   // reader font change it whenever the reader font or size changes.
   int boundBodyFontId = 0;
+  bool sansChrome = false;
+  int wantedBodyFontId() const;
+  void bindFonts();
 };

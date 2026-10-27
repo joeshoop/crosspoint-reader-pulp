@@ -125,6 +125,9 @@ struct ThemeMetrics {
   bool homeContinueReadingInMenu;
   // Home menu is only Books (the Library) and Settings (Pulp).
   bool homeMinimalMenu = false;
+  // Recent books as a two-column grid of shelf books (drawShelfBook) instead
+  // of one cover tile (Pulp).
+  bool homeShelfGrid = false;
   // Library is one Books list: File Transfer, then Recent and On This Device
   // sections, with no sort tabs or search (Pulp).
   bool libraryBookShelf = false;
@@ -360,7 +363,8 @@ class BaseTheme {
   static void drawStatusBar(GfxRenderer& renderer, const float bookProgress, const int currentPage, const int pageCount,
                             std::string title, const int paddingBottom = 0, const int textYOffset = 0,
                             const bool fillMargin = true, const bool isPageBookmarked = false,
-                            const bool pageCountEstimated = false, const bool textAtTop = false);
+                            const bool pageCountEstimated = false, const bool textAtTop = false,
+                            const int bookPage = 0, const bool bookPercent = false);
   static void drawHelpText(const GfxRenderer& renderer, Rect rect, const char* label);
   virtual void drawTextField(const GfxRenderer& renderer, Rect rect, const int textWidth, bool cursorMode = false,
                              int contentStartX = 0, int contentWidth = 0) const;
@@ -374,8 +378,14 @@ class BaseTheme {
   virtual int shelfCoverHeight(const GfxRenderer&) const { return 0; }
   // Height of one grid row, selection marks included.
   virtual int shelfCellHeight(const GfxRenderer&) const { return 0; }
+  // Width of a 2:3 shelf book of this cover height, page edges included, and
+  // the room a cell keeps beside it.
+  virtual int shelfBookWidth(int coverHeight) const { return coverHeight * 2 / 3; }
+  virtual int shelfSideZone() const { return 0; }
   // One recent book in its grid cell.
   virtual void drawShelfBook(GfxRenderer&, Rect, const RecentBook&, int, bool) const {}
+  // Icon for a book row on the shelf list; empty for the default book icon.
+  virtual freeink::ui::BitmapRef shelfBookIcon() const;
   // Highlighter-pen stroke behind a run of text, before the text is drawn.
   // Returns false when the theme has none (callers draw their own fill).
   // Straight highlighter band behind text in a line box at lineTop, for

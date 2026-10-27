@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstring>
+#include <optional>
 
 #include "LibraryIndexFile.h"
 #include "LibraryText.h"
@@ -38,6 +39,8 @@ constexpr size_t NAME_BUF_SIZE = 512;
 // the display name. Fixed stride keeps the second pass a seek rather than a scan.
 constexpr size_t STAGE_NAME_BYTES = 255;
 constexpr size_t STAGE_AUTHOR_BYTES = 128;
+constexpr size_t STAGE_SERIES_BYTES = 96;
+constexpr size_t STAGE_SERIES_POSITION_BYTES = 8;
 // A folder path is stored behind one length byte in the folder section.
 constexpr size_t FOLDER_PATH_BYTES = 255;
 struct StagedEntry {
@@ -55,6 +58,11 @@ struct StagedEntry {
   // title on the other.
   uint8_t titleLen;
   char title[STAGE_NAME_BYTES];
+  // The series the book names, and its place in it as shown ("2.5").
+  uint8_t seriesLen;
+  char series[STAGE_SERIES_BYTES];
+  uint8_t seriesPositionLen;
+  char seriesPosition[STAGE_SERIES_POSITION_BYTES];
 };
 constexpr size_t STAGE_STRIDE = sizeof(StagedEntry);
 
@@ -75,6 +83,25 @@ struct SpellingSlot {
   uint8_t len;
 };
 static_assert(sizeof(SpellingSlot) <= 136, "spelling vote scratch grew unexpectedly");
+
+// Series order element: a name prefix to sort by, a hash of the whole folded
+// name so two series sharing the prefix never merge, then the place in the
+// series. Ties fall back to the title ordinal.
+struct SeriesKey {
+  char key[8];
+  uint32_t hash;
+  uint16_t rank;
+  uint16_t ordinal;
+};
+static_assert(sizeof(SeriesKey) == 16, "SeriesKey is the series sort's per-book cost");
+
+bool seriesKeyLess(const SeriesKey& a, const SeriesKey& b) {
+  const int cmp = memcmp(a.key, b.key, sizeof(a.key));
+  if (cmp != 0) return cmp < 0;
+  if (a.hash != b.hash) return a.hash < b.hash;
+  if (a.rank != b.rank) return a.rank < b.rank;
+  return a.ordinal < b.ordinal;
+}
 
 bool sortKeyLess(const SortKey& a, const SortKey& b) {
   const int cmp = memcmp(a.key, b.key, sizeof(a.key));
@@ -299,6 +326,8 @@ int findPrior(WalkState& st, const uint64_t pathHash) {
   // and a name pulled out of one by pattern is a guess wearing a fact's clothes.
   std::string title = stemOf(name);
   std::string author;
+  std::string series;
+  std::string seriesPosition;
   bool titleFromBook = false;
   bool authorFromBook = false;
 
@@ -330,6 +359,11 @@ int findPrior(WalkState& st, const uint64_t pathHash) {
       st.failed = true;
       return false;
     }
+    if (!st.previous->readSeries(priorRecord, series) ||
+        !st.previous->readSeriesPosition(priorRecord, seriesPosition)) {
+      st.failed = true;
+      return false;
+    }
     entry.record = priorRecord;
     authorFromBook = !author.empty();
     if (hasBookTitle) {
@@ -347,7 +381,9 @@ int findPrior(WalkState& st, const uint64_t pathHash) {
     st.stats->parsed++;
     Epub epub(fullPath, CACHE_DIR);
     std::string bookTitle;
-    if (epub.loadMetadata(bookTitle, author)) {
+    std::optional<float> seriesIndex;
+    if (epub.loadMetadata(bookTitle, author, &series, &seriesIndex)) {
+      if (!series.empty() && seriesIndex) seriesPosition = formatSeriesPosition(*seriesIndex);
       entry.record.metadataStatus = CLIX_METADATA_EXTRACTED;
       if (!bookTitle.empty()) {
         title = std::move(bookTitle);
@@ -408,6 +444,12 @@ int findPrior(WalkState& st, const uint64_t pathHash) {
     memcpy(entry.record.authorKey, key.data(), entry.record.authorKeyLen);
   }
   memcpy(entry.name, name.data(), entry.record.nameLen);
+  entry.seriesLen = static_cast<uint8_t>(
+      utf8SafeTruncateBuffer(series.data(), static_cast<int>(std::min(series.size(), STAGE_SERIES_BYTES))));
+  memcpy(entry.series, series.data(), entry.seriesLen);
+  entry.seriesPositionLen =
+      entry.seriesLen == 0 ? 0 : static_cast<uint8_t>(std::min(seriesPosition.size(), STAGE_SERIES_POSITION_BYTES));
+  memcpy(entry.seriesPosition, seriesPosition.data(), entry.seriesPositionLen);
 
   const std::string displayAuthor = cleanPersonName(author);
   entry.authorLen = static_cast<uint8_t>(std::min(displayAuthor.size(), STAGE_AUTHOR_BYTES));
@@ -550,7 +592,7 @@ void walk(WalkState& st, const std::string& path, const int depth) {
 // truth.
 uint32_t blobBytesFor(const StagedEntry& entry, const StagedEntry& canonical) {
   return sizeof(entry.pathHash) + entry.record.nameLen + 1u + canonical.authorLen + 1u + entry.titleLen + 1u +
-         entry.authorLen;
+         entry.authorLen + 1u + entry.seriesLen + 1u + entry.seriesPositionLen;
 }
 
 bool emitIndex(const char* folderStagePath, WalkState& st, const uint16_t* order, const uint16_t* resolvedFirstSeen,
@@ -980,6 +1022,49 @@ bool emitIndex(const char* folderStagePath, WalkState& st, const uint16_t* order
     const uint16_t ordinal = arrivalOrder[k];
     put(&ordinal, sizeof(ordinal));
   }
+
+  // --- series order --------------------------------------------------------
+  //
+  // Sorted here, once the author keys are written and freed, so the two arrays
+  // never share the heap. Without the allocation the series order falls back
+  // to the title order: books stay findable, only the series grouping is lost.
+  authorSort.reset();
+  auto seriesSort = rankable && n > 1 ? makeUniqueNoThrow<SeriesKey[]>(n) : nullptr;
+  if (rankable && n > 1 && !seriesSort) {
+    LOG_ERR("LIBIDX", "OOM: %u-byte series sort, series order falls back to title",
+            static_cast<unsigned>(n * sizeof(SeriesKey)));
+  }
+  if (seriesSort) {
+    for (uint16_t i = 0; i < n; i++) {
+      serviceBuilder(serviceUnits);
+      if (!fetch(order[i], entry)) break;
+      SeriesKey& key = seriesSort[i];
+      key.ordinal = i;
+      if (entry.seriesLen == 0) {
+        // 0xFF outranks every folded byte, so books in no series come last.
+        memset(key.key, 0xFF, sizeof(key.key));
+        key.hash = 0xFFFFFFFFu;
+        key.rank = 0;
+        continue;
+      }
+      const std::string folded = fold(std::string_view(entry.series, entry.seriesLen));
+      memset(key.key, 0, sizeof(key.key));
+      memcpy(key.key, folded.data(), std::min(folded.size(), sizeof(key.key)));
+      key.hash = fnv1a32(folded.data(), folded.size());
+      key.rank = seriesPositionRank(std::string_view(entry.seriesPosition, entry.seriesPositionLen));
+    }
+    if (!ioFailed) {
+      delay(1);
+      std::sort(seriesSort.get(), seriesSort.get() + n, seriesKeyLess);
+      delay(1);
+    }
+  }
+  for (uint16_t k = 0; k < n; k++) {
+    serviceBuilder(serviceUnits);
+    const uint16_t ordinal = seriesSort ? seriesSort[k].ordinal : k;
+    put(&ordinal, sizeof(ordinal));
+  }
+  seriesSort.reset();
   padTo(header.nameStart);
 
   uint32_t blobWritten = 0;
@@ -997,6 +1082,10 @@ bool emitIndex(const char* folderStagePath, WalkState& st, const uint16_t* order
     if (entry.titleLen > 0) put(entry.title, entry.titleLen);
     put(&entry.authorLen, 1);
     if (entry.authorLen > 0) put(entry.author, entry.authorLen);
+    put(&entry.seriesLen, 1);
+    if (entry.seriesLen > 0) put(entry.series, entry.seriesLen);
+    put(&entry.seriesPositionLen, 1);
+    if (entry.seriesPositionLen > 0) put(entry.seriesPosition, entry.seriesPositionLen);
     blobWritten += blobBytesFor(entry, canonical);
   }
   header.nameLen = blobWritten;

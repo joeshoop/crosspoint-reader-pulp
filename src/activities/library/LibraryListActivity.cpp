@@ -1,5 +1,6 @@
 #include "LibraryListActivity.h"
 
+#include <BoardConfig.h>
 #include <FreeInkUIIcon.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
@@ -18,13 +19,17 @@
 #include "RecentBooksStore.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "activities/util/KeyboardEntryActivity.h"
+#include "components/BatteryStatus.h"
 #include "components/CoverThumbs.h"
 #include "components/UIScale.h"
 #include "components/UITheme.h"
 #include "components/UIThemeTokens.h"
+#include "components/UiAppHelpers.h"
 #include "components/icons/headerIcons.h"
 #include "components/icons/listIcons.h"
 #include "components/icons/search32.h"
+#include "components/FloatButtons.h"
+#include "components/icons/readerFloatIcons.h"
 #include "fontIds.h"
 #include "util/BookCacheUtils.h"
 
@@ -52,6 +57,8 @@ constexpr bool isAuthorSort(const library::SortOrder order) {
   return order == library::SortOrder::AuthorAsc || order == library::SortOrder::AuthorDesc;
 }
 
+constexpr bool isSeriesSort(const library::SortOrder order) { return order == library::SortOrder::SeriesAsc; }
+
 constexpr library::SortOrder orderForTab(const int tab, const uint8_t descendingTabs) {
   const bool descending = (descendingTabs & (1u << tab)) != 0;
   if (tab == TITLE_TAB) return descending ? library::SortOrder::TitleDesc : library::SortOrder::TitleAsc;
@@ -67,8 +74,8 @@ const char* tabLabelFor(const int tab) {
 
 }  // namespace
 
-LibraryListActivity::LibraryListActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-    : UiTabListActivity("Library", renderer, mappedInput, true) {
+LibraryListActivity::LibraryListActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const bool asHome)
+    : UiTabListActivity("Library", renderer, mappedInput, true), asHome(asHome) {
   // Three short tab labels: a full-slot pill would stretch across a third of
   // the screen, so cap it at the label plus padding (slots stay put).
   tabPillMaxPad = 16;
@@ -85,18 +92,22 @@ void LibraryListActivity::onEnter() {
   app.on(ACTION_SEARCH, &LibraryListActivity::searchActionTrampoline, this);
   app.on(ACTION_REBUILD, &LibraryListActivity::rebuildActionTrampoline, this);
   app.on(ACTION_BACK, &LibraryListActivity::backActionTrampoline, this);
+  app.on(ACTION_GRID, &LibraryListActivity::gridActionTrampoline, this);
 
   // Recent is backed by the resident store. Prune before opening the index so
   // its persistence write never overlaps the long-lived index reader.
   if (RECENT_BOOKS.pruneMissing()) RECENT_BOOKS.saveToFile();
   shelfCoverH = bookShelf() ? GUI.shelfCoverHeight(renderer) : 0;
+  if (isHome()) shelfCoverH = homeCoverHeight();
   syncShelfBooks();
   // Missing cover thumbs are made once the page is up: making one parses its
   // book, which would hold the first paint behind a Loading popup.
   thumbsPending = shelfCoverCount() > 0;
   if (bookShelf()) {
+    // The tab stays on Title so the Recent tab's pinned rows never apply: the
+    // covers already show the recent reads.
     activeTabIndex = TITLE_TAB;
-    sortOrder = library::SortOrder::TitleAsc;
+    applyShelfSort();
   }
 
   // Rebuild when the index is missing, invalid, or was built with the other
@@ -118,6 +129,8 @@ void LibraryListActivity::onEnter() {
     if (!index.open(library::libraryIndexPath())) LOG_ERR("LIB", "cannot open library index");
   }
   degraded = index.isOpen() && index.ranksDegraded();
+  if (bookShelf() && degraded) sortOrder = library::SortOrder::TitleAsc;
+  groupsPending = bookShelf() && groupable();
   if (index.isOpen() && index.dedupDegraded()) {
     LOG_ERR("LIB", "index was built without duplicate detection");
   }
@@ -129,16 +142,116 @@ void LibraryListActivity::onEnter() {
   if (bookShelf()) {
     // No strip to rest on: start on the first cover, else the first book, or
     // File Transfer when the card has none.
-    activeNav().selected = shelfCoverCount() > 0 || listCount() == 1 ? 1 : 2;
+    activeNav().selected = shelfCoverCount() > 0 || listCount() == shelfRows() ? 1 : shelfRows() + 1;
   }
   requestUpdate(true);
 }
 
+// Home's row opens Books; on Books it is File Transfer.
+const char* LibraryListActivity::menuRowLabel() const { return isHome() ? tr(STR_BOOKS) : tr(STR_FILE_TRANSFER); }
+
 bool LibraryListActivity::bookShelf() { return UITheme::getInstance().getMetrics().libraryBookShelf; }
+
+bool LibraryListActivity::shelfIsHome() {
+  return bookShelf() && UITheme::getInstance().getMetrics().homeShelfGrid && BoardConfig::hasTouch();
+}
 
 void LibraryListActivity::onExit() {
   index.close();
+  // After the close: one file open at a time on the card.
+  if (sortDirty) {
+    sortDirty = false;
+    SETTINGS.saveToFile();
+  }
   Activity::onExit();
+}
+
+void LibraryListActivity::applyShelfSort() {
+  // Recently read pins the RecentBooksStore on top (pinnedCount() keys on the
+  // Recent tab); every other order is the plain index order.
+  activeTabIndex = SETTINGS.librarySort == CrossPointSettings::LIBRARY_SORT_RECENT ? RECENT_TAB : TITLE_TAB;
+  switch (SETTINGS.librarySort) {
+    case CrossPointSettings::LIBRARY_SORT_AUTHOR:
+      sortOrder = library::SortOrder::AuthorAsc;
+      break;
+    case CrossPointSettings::LIBRARY_SORT_SERIES:
+      sortOrder = library::SortOrder::SeriesAsc;
+      break;
+    case CrossPointSettings::LIBRARY_SORT_RECENT:
+    case CrossPointSettings::LIBRARY_SORT_ADDED:
+      sortOrder = library::SortOrder::RecentDesc;
+      break;
+    default:
+      sortOrder = library::SortOrder::TitleAsc;
+      break;
+  }
+  applyFilter();
+  refreshOverlap();
+  groupsPending = groupable();
+}
+
+void LibraryListActivity::showSortPicker() {
+  if (degraded) return;
+  // Picker order, as librarySort values.
+  static constexpr uint8_t kSorts[] = {CrossPointSettings::LIBRARY_SORT_RECENT, CrossPointSettings::LIBRARY_SORT_TITLE,
+                                       CrossPointSettings::LIBRARY_SORT_AUTHOR, CrossPointSettings::LIBRARY_SORT_SERIES,
+                                       CrossPointSettings::LIBRARY_SORT_ADDED};
+  static constexpr StrId kLabels[] = {StrId::STR_SHELF_RECENT_FIRST, StrId::STR_SHELF_BY_TITLE,
+                                      StrId::STR_SHELF_BY_AUTHOR, StrId::STR_SHELF_BY_SERIES,
+                                      StrId::STR_SHELF_BY_ADDED};
+  static_assert(std::size(kSorts) == CrossPointSettings::LIBRARY_SORT_COUNT, "sort options");
+  int current = 0;
+  for (int i = 0; i < static_cast<int>(std::size(kSorts)); i++) {
+    if (kSorts[i] == SETTINGS.librarySort) current = i;
+  }
+  optionPopup.show(StrId::STR_SHELF_SORT, kLabels, static_cast<int>(std::size(kLabels)), current, [this](int i) {
+    if (kSorts[i] == SETTINGS.librarySort) return;
+    SETTINGS.librarySort = kSorts[i];
+    sortDirty = true;
+    applyShelfSort();
+    activeNav().selected = 1;
+    activeNav().top = 0;
+  });
+  requestUpdate();
+}
+
+void LibraryListActivity::cycleShelfSort() {
+  // Without finished ranks only the discovery order exists.
+  if (degraded) return;
+  SETTINGS.librarySort = static_cast<uint8_t>((SETTINGS.librarySort + 1) % CrossPointSettings::LIBRARY_SORT_COUNT);
+  sortDirty = true;
+  applyShelfSort();
+  requestUpdate();
+}
+
+bool LibraryListActivity::rowStartsSection(const int row) const {
+  if (row == 0) return true;
+  if (!bookShelf()) return false;
+  const int covers = shelfCoverCount();
+  if (shelfLeadRows() > 0 && (row == covers || row == covers + 1)) return true;
+  if (row == shelfRows()) return true;
+  const int entry = row - shelfRows();
+  if (entry <= 0 || groupCount == 0 || groupsCollapsed) return false;
+  return std::binary_search(groupStarts.get(), groupStarts.get() + groupCount, static_cast<uint16_t>(entry));
+}
+
+void LibraryListActivity::jumpShelfSection(const int direction, const int count) {
+  const int entry = ringPos() - 1 - shelfRows();
+  // Above the books, or back past the first one, a hold steps rows.
+  if (entry < 0 || groupCount == 0 || groupsCollapsed || (direction < 0 && entry == 0)) {
+    holdStepRows(direction, count);
+    return;
+  }
+  const int group = groupForBook(entry);
+  int target = 0;
+  if (direction > 0) {
+    target = group + 1 < groupCount ? groupStarts[group + 1] : bookRowCount() - 1;
+  } else if (groupStarts[group] < entry) {
+    target = groupStarts[group];
+  } else {
+    target = group > 0 ? groupStarts[group - 1] : 0;
+  }
+  moveRingTo(1 + shelfRows() + target);
 }
 
 bool LibraryListActivity::rebuildIndex(bool* changed) {
@@ -208,7 +321,7 @@ void LibraryListActivity::resolvePinned() {
 void LibraryListActivity::syncShelfBooks() {
   if (shelfCoverH <= 0) return;
   const auto& books = RECENT_BOOKS.getBooks();
-  const size_t count = std::min<size_t>(books.size(), kShelfCovers);
+  const size_t count = std::min<size_t>(books.size(), shelfCoverLimit());
   std::vector<RecentBook> previous;
   previous.swap(shelfBooks);
   shelfBooks.assign(books.begin(), books.begin() + static_cast<std::ptrdiff_t>(count));
@@ -246,24 +359,27 @@ void LibraryListActivity::refreshOverlap() {
   std::sort(overlapRows, overlapRows + overlapCount);
 }
 
+bool LibraryListActivity::pathForEntry(const int entry, std::string& path) {
+  if (entry < pinnedCount()) {
+    const auto& books = RECENT_BOOKS.getBooks();
+    if (entry < 0 || entry >= static_cast<int>(books.size())) return false;
+    path = books[static_cast<size_t>(entry)].path;
+    return true;
+  }
+  if (!index.isOpen()) return false;
+  const uint16_t ordinal = index.ordinalForRow(sortOrder, static_cast<uint16_t>(rowFor(entry)));
+  if (ordinal == 0xFFFF) return false;
+  library::ClixRecord record{};
+  if (!index.readRecord(ordinal, record) || !index.readPath(record, path)) {
+    LOG_ERR("LIB", "cannot resolve path for row %d", entry);
+    return false;
+  }
+  return true;
+}
+
 void LibraryListActivity::openSelectedBook() {
   std::string path;
-  if (selectedEntry() < pinnedCount()) {
-    const auto& books = RECENT_BOOKS.getBooks();
-    if (selectedEntry() >= static_cast<int>(books.size())) return;
-    path = books[static_cast<size_t>(selectedEntry())].path;
-  } else {
-    if (!index.isOpen()) return;
-    const uint16_t ordinal = index.ordinalForRow(sortOrder, static_cast<uint16_t>(rowFor(selectedEntry())));
-    if (ordinal == 0xFFFF) return;
-
-    library::ClixRecord record{};
-    if (!index.readRecord(ordinal, record) || !index.readPath(record, path)) {
-      LOG_ERR("LIB", "cannot resolve path for row %d", selectedEntry());
-      return;
-    }
-  }
-  openBookByPath(path);
+  if (pathForEntry(selectedEntry(), path)) openBookByPath(path);
 }
 
 // Shared by row activation and the options menu: the reader screen this opens
@@ -285,7 +401,19 @@ void LibraryListActivity::activateIndex(const int index) {
     // The parameter shadows the index member; release the card before leaving.
     app.clearTapFlash();
     this->index.close();
-    activityManager.goToFileTransfer();
+    if (isHome()) {
+      activityManager.goToLibrary();
+    } else {
+      activityManager.goToFileTransfer();
+    }
+    return;
+  }
+  if (onSortRow()) {
+    if (shelfIsHome()) {  // touch boards: Home and Books both pick
+      showSortPicker();
+    } else {
+      cycleShelfSort();
+    }
     return;
   }
   if (groupsCollapsed) {
@@ -302,7 +430,7 @@ void LibraryListActivity::activateIndex(const int index) {
 bool LibraryListActivity::deleteEligible() const { return !groupsCollapsed && (!query.empty() || !groupable()); }
 
 void LibraryListActivity::onRowLongPress(const int index) {
-  if (onFileTransferRow()) return;
+  if (onFileTransferRow() || onSortRow()) return;
   if (selectedCover() >= 0) {
     const auto& book = shelfBooks[static_cast<size_t>(selectedCover())];
     showBookOptions(book.path, book.title, true);
@@ -412,6 +540,7 @@ void LibraryListActivity::resetAfterRebuild() {
   // Sort positions, group starts, and pinned rows all point into the old order.
   applyFilter();
   resolvePinned();
+  groupsPending = bookShelf() && groupable();
   auto& nav = activeNav();
   const int count = listCount();
   if (count == 0) {
@@ -584,6 +713,8 @@ int LibraryListActivity::bookRowCount() const {
 }
 
 int LibraryListActivity::listCount() const {
+  // Home has no list: the book and the Books button are drawn directly.
+  if (isHome()) return 0;
   return groupsCollapsed ? static_cast<int>(groupCount) : bookRowCount() + shelfRows();
 }
 
@@ -635,9 +766,15 @@ bool LibraryListActivity::buildGroupStarts() {
   previousAuthor.reserve(128);
   title.reserve(128);
   author.reserve(128);
+  std::string position;
   for (int entry = 0; entry < count; entry++) {
     bool startsGroup = entry == 0;
-    if (isAuthorSort(sortOrder)) {
+    if (isSeriesSort(sortOrder)) {
+      // previousAuthor holds the previous book's series here.
+      seriesFor(entry, title, position);
+      startsGroup = startsGroup || title != previousAuthor;
+      previousAuthor = title;
+    } else if (isAuthorSort(sortOrder)) {
       rowTextFor(entry, title, author);
       startsGroup = startsGroup || author != previousAuthor;
       previousAuthor = author;
@@ -695,6 +832,7 @@ void LibraryListActivity::restoreExpandedList() {
 void LibraryListActivity::applyFilter() {
   groupsCollapsed = false;
   groupCount = 0;
+  groupsPending = false;
   filtered.reset();
   filteredCount = 0;
   filterFailed = false;
@@ -742,7 +880,9 @@ void LibraryListActivity::applyFilter() {
 // leave for home.
 void LibraryListActivity::handleBackAction() {
   auto& nav = activeNav();
-  if (bookShelf()) {
+  if (isHome()) {
+    return;  // already home
+  } else if (bookShelf()) {
     onGoHome();
   } else if (!query.empty()) {
     query.clear();
@@ -805,6 +945,21 @@ bool LibraryListActivity::rowTextFor(const int entry, std::string& title, std::s
   return true;
 }
 
+void LibraryListActivity::seriesFor(const int entry, std::string& series, std::string& position) {
+  series.clear();
+  position.clear();
+  // Pinned store rows carry no series; the shelf never pins.
+  if (entry < pinnedCount()) return;
+  const uint16_t ordinal = index.ordinalForRow(sortOrder, static_cast<uint16_t>(rowFor(entry)));
+  library::ClixRecord record{};
+  if (ordinal == 0xFFFF || !index.readRecord(ordinal, record)) return;
+  if (!index.readSeries(record, series) || series.empty()) {
+    series.clear();
+    return;
+  }
+  if (!index.readSeriesPosition(record, position)) position.clear();
+}
+
 bool LibraryListActivity::handleCustomInput() {
   if (thumbsPending && painted) {
     thumbsPending = false;
@@ -812,8 +967,14 @@ bool LibraryListActivity::handleCustomInput() {
   } else if (reconcilePending && painted) {
     reconcilePending = false;
     reconcileAfterPaint();
+  } else if (groupsPending && painted) {
+    groupsPending = false;
+    RenderLock lock(*this);
+    buildGroupStarts();
   }
   if (optionPopup.handleInput(mappedInput, [this] { requestUpdate(); })) return true;
+
+  if (isHome() && handleHomeInput()) return true;
 
   if (lockNextConfirmRelease && mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     lockNextConfirmRelease = false;
@@ -878,8 +1039,8 @@ void LibraryListActivity::navigateButtons() {
     // Rows only: the ring never visits the absent strip.
     buttonNavigator.onNextPress([this, count] { stepRowsWithSectionJumps(1, count); });
     buttonNavigator.onPreviousPress([this, count] { stepRowsWithSectionJumps(-1, count); });
-    buttonNavigator.onNextContinuous([this, count] { holdStepRows(1, count); });
-    buttonNavigator.onPreviousContinuous([this, count] { holdStepRows(-1, count); });
+    buttonNavigator.onNextContinuous([this, count] { jumpShelfSection(1, count); });
+    buttonNavigator.onPreviousContinuous([this, count] { jumpShelfSection(-1, count); });
     return;
   }
   if (mappedInput.wasPressed(MappedInputManager::Button::NavNext) ||
@@ -1028,26 +1189,42 @@ void LibraryListActivity::buildRows(UiScreen& screen) {
           rows > 0 ? winItems[0].label : "<none>");
 }
 
-// Books shelf, full list: the card's books by title under a pinned "On This
-// Device" heading, each on one "Title - Author" entry. Windowed like
-// buildRows(); list positions are shifted by the shelf's leading rows.
+// Books shelf, full list: the card's books in the chosen order under a pinned
+// "On This Device" heading, title over an italic author, with letter or author
+// headings. Windowed like buildRows(); list positions are shifted by the
+// shelf's leading rows.
 void LibraryListActivity::buildShelfRows(UiScreen& screen) {
   if (shelfCoverView()) {
     buildShelfCovers(screen);
     return;
   }
-  drawShelfHeading(screen, static_cast<int16_t>(UITheme::getInstance().getMetrics().listRowHeight));
+  // Without covers the sort row is a list row of its own.
+  if (shelfCoverCount() > 0) {
+    drawShelfHeading(screen, static_cast<int16_t>(UITheme::getInstance().getMetrics().listRowHeight), false);
+  }
   fui::ListProps props;
   props.count = static_cast<uint16_t>(listCount());
   props.action = ACTION_ROW;
   props.inputMask = fui::InputTouch | fui::InputLongPress;
+  applySectionHeadingStyle(screen.theme(), props);
   props.labelText = screen.theme().bodyText;
   // Long titles wrap, with air between rows as in the file browser.
   props.labelText.maxLines = 2;
+  props.subtitleText = screen.theme().bodyText;
+  props.subtitleText.italic = true;
+  props.subtitleGap = 0;  // the author is simply the next line
   props.rowGap = std::max<int16_t>(screen.theme().listRowGap, 6);
+  if (spineShelf()) {
+    props.labelText.maxLines = 1;
+    props.valueText = screen.theme().bodyText;
+    props.valueText.italic = true;
+    props.rowGap = 0;
+    props.separatorPaint = fui::Paint::solid(fui::Color::LightGray);
+    props.balanceWrappedLabelWithValue = false;
+  }
   syncTabListViewport(screen, props);
-  // Covers and File Transfer stay on the cover page; without covers, File
-  // Transfer leads the list.
+  // Covers, File Transfer and the sort row stay on the cover page; without
+  // covers, they lead the list.
   const int firstRow = shelfCoverCount() > 0 ? shelfRows() : 0;
   if (props.topIndex < firstRow) {
     props.topIndex = static_cast<uint16_t>(firstRow);
@@ -1057,43 +1234,134 @@ void LibraryListActivity::buildShelfRows(UiScreen& screen) {
   screen.list(props);
 }
 
-void LibraryListActivity::drawShelfHeading(UiScreen& screen, const int16_t rowHeight) const {
-  fui::ListProps headingProps;
-  applySectionHeadingStyle(screen.theme(), headingProps);
-  const fui::Rect row = screen.takeTop(rowHeight);
-  const int16_t lh = screen.target().lineHeight(headingProps.headerText.font);
-  screen.target().text(fui::Rect{row.x, static_cast<int16_t>(row.y + (row.height - lh) / 2), row.width, lh},
-                       tr(STR_ON_THIS_DEVICE), headingProps.headerText);
+const char* LibraryListActivity::shelfOrderText() {
+  switch (SETTINGS.librarySort) {
+    case CrossPointSettings::LIBRARY_SORT_AUTHOR:
+      return tr(STR_SHELF_BY_AUTHOR);
+    case CrossPointSettings::LIBRARY_SORT_SERIES:
+      return tr(STR_SHELF_BY_SERIES);
+    case CrossPointSettings::LIBRARY_SORT_RECENT:
+      return tr(STR_SHELF_RECENT_FIRST);
+    case CrossPointSettings::LIBRARY_SORT_ADDED:
+      return tr(STR_SHELF_BY_ADDED);
+    default:
+      return tr(STR_SHELF_BY_TITLE);
+  }
 }
 
-// Row items for the shelf from props.topIndex on: File Transfer, then the
-// card's books by title.
+const char* LibraryListActivity::shelfHeadingText() {
+  shelfHeading = tr(STR_ON_THIS_DEVICE);
+  if (!degraded) shelfHeading.append(" \u00B7 ").append(shelfOrderText());
+  return shelfHeading.c_str();
+}
+
+// The sort row as a one-row list, so it takes the theme's selection mark and
+// taps like any row.
+void LibraryListActivity::drawShelfHeading(UiScreen& screen, const int16_t rowHeight, const bool selected) {
+  fui::ListProps props;
+  applySectionHeadingStyle(screen.theme(), props);
+  props.labelText = props.headerText;
+  fui::ListItem item;
+  item.label = shelfHeadingText();
+  item.actionValue = static_cast<int16_t>(shelfCoverCount() + 1);
+  props.items = &item;
+  props.count = 1;
+  props.selectedIndex = selected ? 0 : -1;
+  props.action = ACTION_ROW;
+  props.inputMask = fui::InputTouch | fui::InputLongPress;
+  screen.list(props, rowHeight);
+}
+
+// Row items for the shelf from props.topIndex on: File Transfer and the sort
+// row when they lead the list, then the card's books in the chosen order.
 void LibraryListActivity::fillShelfWindow(fui::ListProps& props, const int visibleRows) {
   const int count = listCount();
   const int covers = shelfCoverCount();
+  const bool authorGrouped = isAuthorSort(sortOrder);
+  const bool seriesGrouped = isSeriesSort(sortOrder);
+  const bool grouped = groupable();
   const size_t cap = static_cast<size_t>(visibleRows > 0 ? visibleRows : 1) + 1;
   if (winTitles.size() < cap) winTitles.resize(cap);
   if (winAuthors.size() < cap) winAuthors.resize(cap);
+  if (winHeaders.size() < cap) winHeaders.resize(cap);
+  if (winSeries.size() < cap) winSeries.resize(cap);
+  if (winSubtitles.size() < cap) winSubtitles.resize(cap);
+  std::string seriesPosition;
   winItems.clear();
   if (winItems.capacity() < cap) winItems.reserve(cap);
+  fui::BitmapRef bookIcon = GUI.shelfBookIcon();
+  if (!bookIcon) bookIcon = listIconFor(UIIcon::Book, 32);
+  const bool spines = spineShelf();
 
   const int windowStart = static_cast<int>(props.topIndex);
   int rows = 0;
+  int headers = 0;
+  // The window's previous book row, for the group comparison; -1 before one.
+  int previousBook = -1;
+  uint32_t previousInitial = 0;
   for (int position = windowStart; position < count && rows < static_cast<int>(cap); position++) {
     fui::ListItem item;
     item.actionValue = static_cast<int16_t>(position);
-    if (position == covers) {
-      item.label = tr(STR_FILE_TRANSFER);
+    if (shelfLeadRows() > 0 && (position == covers || position == covers + 1)) {
+      item.label = position == covers ? menuRowLabel() : shelfHeadingText();
       winItems.push_back(item);
       rows++;
       continue;
     }
     const int entry = position - shelfRows();
-    std::string& line = winTitles[static_cast<size_t>(rows)];
+    std::string& title = winTitles[static_cast<size_t>(rows)];
     std::string& author = winAuthors[static_cast<size_t>(rows)];
-    if (!rowTextFor(entry, line, author)) continue;
-    if (!author.empty()) line.append(" - ").append(author);
-    item.label = line.c_str();
+    std::string& series = winSeries[static_cast<size_t>(rows)];
+    if (!rowTextFor(entry, title, author)) continue;
+    seriesFor(entry, series, seriesPosition);
+    // Each group gets its heading, and the window's first book that of its
+    // group, so the reader always sees where they are.
+    if (grouped) {
+      bool startsGroup = previousBook < 0;
+      uint32_t initial = 0;
+      if (seriesGrouped) {
+        startsGroup = startsGroup || series != winSeries[static_cast<size_t>(previousBook)];
+      } else if (authorGrouped) {
+        startsGroup = startsGroup || author != winAuthors[static_cast<size_t>(previousBook)];
+      } else if (spines) {
+        startsGroup = false;  // spines run on without letter headings
+      } else {
+        initial = titleInitialFor(entry);
+        startsGroup = startsGroup || initial != previousInitial;
+        previousInitial = initial;
+      }
+      if (startsGroup) {
+        std::string& heading = winHeaders[static_cast<size_t>(headers++)];
+        if (seriesGrouped)
+          heading = series.empty() ? tr(STR_SHELF_STANDALONE) : series;
+        else if (authorGrouped)
+          formatAuthorHeading(author, heading);
+        else
+          formatInitialHeading(initial, heading);
+        item.sectionHeading = heading.c_str();
+      }
+    }
+    previousBook = rows;
+    item.label = title.c_str();
+    // "Author · Series #2"; the part the heading already names is left out.
+    std::string& subtitle = winSubtitles[static_cast<size_t>(rows)];
+    subtitle.clear();
+    if (!authorGrouped) subtitle = author;
+    if (!series.empty() && (!seriesGrouped || !seriesPosition.empty())) {
+      if (!subtitle.empty()) subtitle.append(" \u00B7 ");
+      if (!seriesGrouped) subtitle.append(series);
+      if (!seriesPosition.empty()) subtitle.append(seriesGrouped ? "#" : " #").append(seriesPosition);
+    }
+    if (spines) {
+      // A spine: the author at the right; the series is the heading's job.
+      subtitle = authorGrouped ? std::string() : author;
+      if (!subtitle.empty()) item.value = subtitle.c_str();
+      winItems.push_back(item);
+      rows++;
+      continue;
+    }
+    if (!subtitle.empty()) item.subtitle = subtitle.c_str();
+    item.icon = bookIcon;
     winItems.push_back(item);
     rows++;
   }
@@ -1131,13 +1399,14 @@ void LibraryListActivity::buildShelfCovers(UiScreen& screen) {
   const int pageWidth = renderer.getScreenWidth();
   GUI.drawButtonMenu(
       renderer, Rect{0, menuTop, pageWidth, menuRowHeight}, 1, position == covers ? 0 : -1,
-      [](int) { return std::string(tr(STR_FILE_TRANSFER)); }, [](int) { return UIIcon::Transfer; });
+      [this](int) { return std::string(menuRowLabel()); },
+      [this](int) { return isHome() ? UIIcon::Book : UIIcon::Transfer; });
   screen.frame().hit(
       fui::Rect{0, static_cast<int16_t>(menuTop), static_cast<int16_t>(pageWidth), static_cast<int16_t>(menuRowHeight)},
       ACTION_ROW, static_cast<int16_t>(covers), fui::InputTouch | fui::InputLongPress);
   const int headingTop = menuTop + menuRowHeight + metrics.menuSpacing;
   screen.spacer(static_cast<int16_t>(std::max(0, headingTop - screen.body().y)));
-  drawShelfHeading(screen, static_cast<int16_t>(menuRowHeight));
+  drawShelfHeading(screen, static_cast<int16_t>(menuRowHeight), position == covers + 1);
 }
 
 void LibraryListActivity::formatInitialHeading(uint32_t initial, std::string& out) {
@@ -1161,6 +1430,11 @@ void LibraryListActivity::formatAuthorHeading(const std::string& author, std::st
 
 void LibraryListActivity::buildHeader(UiScreen& screen) {
   const auto& metrics = UITheme::getInstance().getMetrics();
+  if (isHome()) return;  // no title: the book fills the page
+  if (spineShelf()) {
+    buildSpineHeader(screen);
+    return;
+  }
   const auto& theme = screen.theme();
   fui::HeaderProps header;
   header.title = headerTitle();
@@ -1211,9 +1485,17 @@ void LibraryListActivity::buildScreen(UiScreen& screen) {
       bookShelf() ? 0
                   : static_cast<int16_t>(renderer.getLineHeight(themedFontId(SMALL_FONT_ID)) + metrics.verticalSpacing);
   buildHeader(screen);
-  screen.setContentMarginFromScreen(fui::Insets{static_cast<int16_t>(metrics.topPadding + metrics.headerHeight), 0,
+  // Home has no header: content starts under the float buttons.
+  int contentTop = isHome() ? float_ui::kReaderMargin + float_ui::kReaderButton + float_ui::kGap
+                                 : metrics.topPadding + metrics.headerHeight;
+  if (spineShelf()) contentTop = spineContentTop();
+  screen.setContentMarginFromScreen(fui::Insets{static_cast<int16_t>(contentTop), 0,
                                                 static_cast<int16_t>(metrics.buttonHintsHeight + readoutReserved), 0});
 
+  if (isHome()) {
+    buildHome(screen);
+    return;
+  }
   if (bookShelf()) {
     buildShelfRows(screen);
     return;
@@ -1302,4 +1584,159 @@ void LibraryListActivity::drawFooter() {
   const auto labels = mappedInput.mapLabels(backLabel, tabsFocused() ? tr(STR_TOGGLE) : confirmLabel,
                                             canSearch ? tr(STR_SEARCH) : tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+}
+
+// --- touch Home: the open book, and the way to the shelf ---------------------
+
+bool LibraryListActivity::handleHomeInput() {
+  // Nothing to move between: Confirm opens the book, the side buttons rest.
+  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    if (lockNextConfirmRelease) {
+      lockNextConfirmRelease = false;
+    } else if (shelfCoverCount() > 0) {
+      openBookByPath(shelfBooks.front().path);
+    }
+    return true;
+  }
+  return mappedInput.wasPressed(MappedInputManager::Button::Up) ||
+         mappedInput.wasPressed(MappedInputManager::Button::Down) ||
+         mappedInput.wasPressed(MappedInputManager::Button::Confirm);
+}
+
+int LibraryListActivity::homeButtonsTop() const {
+  return renderer.getScreenHeight() - kHomeButtonsBottom - float_ui::kReaderButton;
+}
+
+int LibraryListActivity::homeCellHeight() const { return (homeButtonsTop() - kHomeButtonsGap - kHomeTop) / 2; }
+
+// As tall as a row allows, unless two books side by side would leave less
+// than kHomeMinGap at the edges and between them.
+int LibraryListActivity::homeCoverHeight() const {
+  const int extra = GUI.shelfCellHeight(renderer) - GUI.shelfCoverHeight(renderer);
+  int height = homeCellHeight() - extra;
+  const int width = renderer.getScreenWidth();
+  while (height > 0 && 2 * GUI.shelfBookWidth(height) + 3 * kHomeMinGap > width) height--;
+  return height;
+}
+
+void LibraryListActivity::gridActionTrampoline(const fui::ActionEvent& event, void* user) {
+  auto* self = static_cast<LibraryListActivity*>(user);
+  if (event.value >= kSpineSort) {
+    if (!event.longPress) self->onSpineAction(event.value);
+    return;
+  }
+  if (event.value == kGridBooks) {
+    if (event.longPress) return;
+    self->app.clearTapFlash();
+    self->index.close();
+    activityManager.goToLibrary();
+    return;
+  }
+  if (event.value < 0 || event.value >= self->shelfCoverCount()) return;
+  const auto& book = self->shelfBooks[static_cast<size_t>(event.value)];
+  if (event.longPress) {
+    self->showBookOptions(book.path, book.title, true);
+  } else {
+    self->openBookByPath(book.path);
+  }
+}
+
+void LibraryListActivity::buildHome(UiScreen& screen) {
+  const int width = renderer.getScreenWidth();
+  const auto hit = [&screen](const int x, const int y, const int w, const int h, const int16_t value,
+                             const uint8_t input) {
+    screen.frame().hit(fui::Rect{static_cast<int16_t>(x), static_cast<int16_t>(y), static_cast<int16_t>(w),
+                                 static_cast<int16_t>(h)},
+                       ACTION_GRID, value, input);
+  };
+
+  // The recent books, two to a row, with the same space at the edges as
+  // between them.
+  const int covers = shelfCoverCount();
+  if (covers > 0) {
+    const int bookWidth = GUI.shelfBookWidth(shelfCoverH);
+    const int gap = (width - 2 * bookWidth) / 3;
+    const int cellWidth = bookWidth + 2 * GUI.shelfSideZone();
+    const int cellHeight = homeCellHeight();
+    for (int i = 0; i < covers; i++) {
+      const int bookX = gap + (i % 2) * (bookWidth + gap);
+      const Rect cell{bookX - GUI.shelfSideZone(), kHomeTop + (i / 2) * cellHeight, cellWidth, cellHeight};
+      GUI.drawShelfBook(renderer, cell, shelfBooks[static_cast<size_t>(i)], shelfCoverH, false);
+      hit(cell.x, cell.y, cell.width, cell.height, static_cast<int16_t>(i), fui::InputTouch | fui::InputLongPress);
+    }
+  } else {
+    screen.centeredText(tr(STR_NO_OPEN_BOOK));
+  }
+
+  // The shelf. Settings is the control center, pulled down.
+  constexpr int size = float_ui::kReaderButton;
+  const int x = (width - size) / 2;
+  const int top = homeButtonsTop();
+  float_ui::drawRound(renderer, float_ui::Box{x, top, size, size}, icon_float_library_28, float_ui::kReaderFill);
+  hit(x, top, size, size, kGridBooks, fui::InputTouch);
+
+  if (battery_status::isLow()) battery_status::drawBadge(renderer, width / 2, kLowBadgeTop);
+}
+
+// --- touch Books: book spines -------------------------------------------------
+
+int LibraryListActivity::spineContentTop() const {
+  return float_ui::kReaderEdge + float_ui::kReaderButton + float_ui::kReaderEdge;
+}
+
+void LibraryListActivity::buildSpineHeader(UiScreen& screen) {
+  const int width = renderer.getScreenWidth();
+  constexpr int size = float_ui::kReaderButton;
+  const int top = float_ui::kReaderEdge;
+  const int closeX = width - float_ui::kReaderMargin - size;
+
+  const auto hit = [&screen](const int x, const int y, const int w, const int h, const int16_t value) {
+    screen.frame().hit(fui::Rect{static_cast<int16_t>(x), static_cast<int16_t>(y), static_cast<int16_t>(w),
+                                 static_cast<int16_t>(h)},
+                       ACTION_GRID, value, fui::InputTouch);
+  };
+
+  // File Transfer beside the close button.
+  const int menuX = closeX - float_ui::kGap - size;
+  float_ui::drawRound(renderer, float_ui::Box{menuX, top, size, size}, icon_float_transfer_28, float_ui::kReaderFill);
+  hit(menuX, top, size, size, kSpineTransfer);
+
+  // The order as a pill button at the left: "By Title" and a down chevron.
+  std::string order = shelfOrderText();
+  if (!order.empty() && order[0] >= 'a' && order[0] <= 'z') order[0] = static_cast<char>(order[0] - 'a' + 'A');
+  const int font = uiScaleSpec().bodyFontId;
+  constexpr int chevronGap = 6;
+  constexpr int pillPad = 28;  // text to the pill's rounded ends
+  const int textWidth = renderer.getTextWidth(font, order.c_str(), EpdFontFamily::ITALIC);
+  const int pillX = float_ui::kReaderMargin;
+  const int pillWidth =
+      std::min(menuX - float_ui::kGap - pillX, 2 * pillPad + textWidth + chevronGap + icon_float_chevron_down_28.w);
+  float_ui::drawShape(renderer, pillX, top, pillWidth, size, float_ui::kReaderFill);
+  const int textX = pillX + pillPad;
+  renderer.drawText(font, textX, top + (size - renderer.getLineHeight(font)) / 2, order.c_str(), true,
+                    EpdFontFamily::ITALIC);
+  float_ui::drawIcon(renderer, icon_float_chevron_down_28, textX + textWidth + chevronGap,
+                     top + (size - icon_float_chevron_down_28.h) / 2);
+  hit(pillX, top, pillWidth, size, kSpineSort);
+
+  float_ui::drawRound(renderer, float_ui::Box{closeX, top, size, size}, icon_float_close_28, float_ui::kReaderFill);
+  hit(closeX, top, size, size, kSpineClose);
+
+  if (battery_status::isLow()) battery_status::drawBadge(renderer, width / 2, kLowBadgeTop);
+}
+
+void LibraryListActivity::onSpineAction(const int16_t value) {
+  app.clearTapFlash();
+  switch (value) {
+    case kSpineClose:
+      handleBackAction();
+      break;
+    case kSpineTransfer:
+      index.close();
+      activityManager.goToFileTransfer();
+      break;
+    default:
+      showSortPicker();
+      break;
+  }
 }

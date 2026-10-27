@@ -77,6 +77,9 @@ class HomeActivity final : public Activity {
   int getMenuItemCount() const;
   bool storeCoverBuffer();
   int coverTileHeight() const;  // Store frame buffer for cover image
+  // Shelf-grid home: cell i of the two-column recent-book grid.
+  Rect shelfCell(int index) const;
+  void drawShelfGrid();
   bool restoreCoverBuffer();    // Restore frame buffer from stored cover
   void freeCoverBuffer();       // Free the stored cover buffer
   void loadRecentBooks(int maxBooks);

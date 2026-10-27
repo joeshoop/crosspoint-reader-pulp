@@ -31,6 +31,8 @@ freeink::ui::BitmapRef BaseTheme::checkboxIcon(const bool checked) {
   return freeink::ui::bitmapFromIcon(checked ? icon_checkbox_on_32 : icon_checkbox_off_32);
 }
 
+freeink::ui::BitmapRef BaseTheme::shelfBookIcon() const { return {}; }
+
 void BaseTheme::setCheckboxRow(freeink::ui::ListItem& item, const bool checked) {
   item.value = nullptr;
   item.toggle = true;
@@ -973,7 +975,7 @@ void BaseTheme::drawReaderProgressRibbon(const GfxRenderer& renderer, const int 
 void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, const int currentPage,
                               const int pageCount, std::string title, const int paddingBottom, const int textYOffset,
                               const bool fillMargin, const bool isPageBookmarked, const bool pageCountEstimated,
-                              const bool textAtTop) {
+                              const bool textAtTop, const int bookPage, const bool bookPercent) {
   auto metrics = UITheme::getInstance().getMetrics();
   int orientedMarginTop, orientedMarginRight, orientedMarginBottom, orientedMarginLeft;
   renderer.getOrientedViewableTRBL(&orientedMarginTop, &orientedMarginRight, &orientedMarginBottom,
@@ -1012,7 +1014,12 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
 
     // On a chapter's last page the book percent stands in for the 0.
     const int pagesLeft = std::max(0, pageCount - currentPage);
-    if (bookStyle && sb.showChapterPageCount && (sb.showBookProgressPercent || pagesLeft == 0)) {
+    if (bookStyle && bookPercent) {
+      snprintf(progressStr, sizeof(progressStr), "%.0f%%", bookProgress);
+    } else if (bookStyle && sb.showChapterPageCount && bookPage > 0) {
+      // Book-wide page, counting up (estimated from the chapters read so far).
+      snprintf(progressStr, sizeof(progressStr), "%d", bookPage);
+    } else if (bookStyle && sb.showChapterPageCount && (sb.showBookProgressPercent || pagesLeft == 0)) {
       if (pagesLeft == 0) {
         snprintf(progressStr, sizeof(progressStr), "%.0f%%", bookProgress);
       } else {
@@ -1125,7 +1132,7 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
     const int titleMarginRight = rightClusterWidth + 30;
 
     // Attempt to center title on the screen, but if title is too wide then later we will center it within the
-    // available space.
+    // available space. Book style keeps it centred on the page and truncates instead.
     int titleMarginLeftAdjusted = std::max(titleMarginLeft, titleMarginRight);
     int availableTitleSpace = rendererableScreenWidth - 2 * titleMarginLeftAdjusted;
 
@@ -1142,7 +1149,7 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
 
     int titleWidth;
     titleWidth = renderer.getTextWidth(titleFontId, title.c_str(), titleStyle);
-    if (titleWidth > availableTitleSpace) {
+    if (titleWidth > availableTitleSpace && !metrics.statusBarBookStyle) {
       // Not enough space to center on the screen, center it within the remaining space instead
       availableTitleSpace = rendererableScreenWidth - titleMarginLeft - titleMarginRight;
       titleMarginLeftAdjusted = titleMarginLeft;

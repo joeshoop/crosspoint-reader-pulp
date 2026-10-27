@@ -17,6 +17,7 @@
 #include "ProgressMapper.h"
 #include "ReaderActivity.h"
 #include "ReaderToolbarUi.h"
+#include "components/FloatButtons.h"
 #include "components/OptionPopup.h"
 
 class EpubReaderActivity final : public ReaderActivity {
@@ -67,7 +68,10 @@ class EpubReaderActivity final : public ReaderActivity {
   // over the page instead of pushing the full-screen list menu. Select opens the
   // Toolbar; its tools open the Contents/Text/More bottom-sheet panels. Themes
   // with readerMenuSheet open Menu instead: a short list sheet, nothing else.
-  enum class Overlay { None, Toolbar, Contents, Text, More, Menu };
+  // Touch boards with readerMenuSheet use Float instead (iOS Books style):
+  // round Close and Menu buttons over the page; Menu opens FloatMenu, a stack
+  // of pills with a row of round buttons under it.
+  enum class Overlay { None, Toolbar, Contents, Text, More, Menu, Float, FloatMenu, FloatContents };
   Overlay overlay = Overlay::None;
   int focusedTool = 0;  // toolbar tool focus: 0=Contents, 1=Text, 2=More
   int panelIndex = 0;   // selected row within the active panel
@@ -122,6 +126,8 @@ class EpubReaderActivity final : public ReaderActivity {
   void saveLinkStack() const;
   void loadLinkStack();
 
+  // readerRenderSpecSignature() of the spec the section was last built with.
+  uint32_t builtSpecSignature = 0;
   uint16_t buildViewportWidth = 0;
   uint16_t buildViewportHeight = 0;
   bool partialRebuildStartFailed = false;
@@ -159,9 +165,35 @@ class EpubReaderActivity final : public ReaderActivity {
   void openReaderMenu();
   // Toolbar reader menu (see Overlay above).
   bool usesToolbarMenu() const;
+  // Book-wide page estimate for the running head: bytes per page learned from
+  // the chapters paginated so far, reset when the layout changes.
+  mutable uint32_t learnedBytes = 0;
+  mutable uint32_t learnedPages = 0;
+  mutable int learnedSpine = -1;
+  mutable int learnedLayoutKey = 0;
+  void bookPageEstimate(int currentPage, int pageCount, int& bookPage, int& bookPageCount) const;
   static bool usesMenuSheet();
   // The overlay Select opens: the toolbar, or the menu sheet.
-  static Overlay rootOverlay() { return usesMenuSheet() ? Overlay::Menu : Overlay::Toolbar; }
+  static Overlay rootOverlay();
+  static bool usesFloatMenu();
+  // Float / FloatMenu chrome: one shared layout for drawing and hit tests.
+  struct FloatLayout {
+    float_ui::Box close;
+    float_ui::Box menu;
+    float_ui::Box pills[2];  // Contents, Themes & Settings (top to bottom)
+    float_ui::Box round[3];  // Share (page as QR), Rotate, Bookmark (left to right)
+  };
+  FloatLayout floatLayout() const;
+  void renderFloat();
+  void handleFloatInput();
+  void runFloatAction(EpubReaderMenuActivity::MenuAction action);
+  // Full-screen Contents the float menu opens: book header, then the TOC.
+  int floatContentsTop = 0;  // first TOC row on screen
+  int floatContentsListY() const;
+  int floatContentsRowHeight() const;
+  int floatContentsRows() const;
+  void renderFloatContents();
+  void handleFloatContentsInput();
   void openOverlay(Overlay target);
   void closeOverlayToPage();
   void discardOverlayPage();

@@ -349,7 +349,11 @@ bool MappedInputManager::wasMenuGesture() const { return wasTopEdgeDownSwipe(); 
 bool MappedInputManager::wasReaderMenuSwipeUp() const { return gpio.hasHomeKey() && wasBottomEdgeUpSwipe(); }
 
 bool MappedInputManager::wasHomeGesture() const {
-  return gpio.hasHomeKey() ? homeAction == HomeButtonAction::Home : wasBottomEdgeUpSwipe();
+  if (!gpio.hasHomeKey()) return wasBottomEdgeUpSwipe();
+  if (homeAction == HomeButtonAction::Home) return true;
+  // Home-key boards: the bottom-edge swipe also exits, like closing an app,
+  // unless the reader menu has been set to open with it.
+  return SETTINGS.showReaderMenu != CrossPointSettings::READER_MENU_SWIPE_UP && wasBottomEdgeUpSwipe();
 }
 
 bool MappedInputManager::wasLightPanelGesture() const {
