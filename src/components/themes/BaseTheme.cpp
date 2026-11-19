@@ -1001,7 +1001,7 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
     // Right aligned text for progress counter
     char progressStr[32];
 
-    // Book style: pages left in the chapter and/or the book percent, set like the running title.
+    // Book style: the book page or the book percent, set like the running title.
     const bool bookStyle = metrics.statusBarBookStyle;
     const int progressFontId = bookStyle ? SETTINGS.getReaderFontId() : SMALL_FONT_ID;
     const EpdFontFamily::Style progressStyle = EpdFontFamily::REGULAR;
@@ -1012,21 +1012,14 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
     // Draw the estimate marker separately so it can use the next UI font size.
     const bool showEstimate = pageCountEstimated && sb.showChapterPageCount && !bookStyle;
 
-    // On a chapter's last page the book percent stands in for the 0.
-    const int pagesLeft = std::max(0, pageCount - currentPage);
     if (bookStyle && bookPercent) {
       snprintf(progressStr, sizeof(progressStr), "%.0f%%", bookProgress);
     } else if (bookStyle && sb.showChapterPageCount && bookPage > 0) {
       // Book-wide page, counting up (estimated from the chapters read so far).
       snprintf(progressStr, sizeof(progressStr), "%d", bookPage);
-    } else if (bookStyle && sb.showChapterPageCount && (sb.showBookProgressPercent || pagesLeft == 0)) {
-      if (pagesLeft == 0) {
-        snprintf(progressStr, sizeof(progressStr), "%.0f%%", bookProgress);
-      } else {
-        snprintf(progressStr, sizeof(progressStr), "%d  %.0f%%", pagesLeft, bookProgress);
-      }
-    } else if (bookStyle && sb.showChapterPageCount) {
-      snprintf(progressStr, sizeof(progressStr), "%d", pagesLeft);
+    } else if (bookStyle) {
+      // No book page yet (the book has no size): the book percent.
+      snprintf(progressStr, sizeof(progressStr), "%.0f%%", bookProgress);
     } else if (sb.showBookProgressPercent && sb.showChapterPageCount) {
       snprintf(progressStr, sizeof(progressStr), "%d/%d  %.0f%%", currentPage, pageCount, bookProgress);
     } else if (sb.showBookProgressPercent) {

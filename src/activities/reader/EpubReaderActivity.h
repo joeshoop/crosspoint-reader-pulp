@@ -181,7 +181,7 @@ class EpubReaderActivity final : public ReaderActivity {
     float_ui::Box close;
     float_ui::Box menu;
     float_ui::Box pills[2];  // Contents, Themes & Settings (top to bottom)
-    float_ui::Box round[3];  // Share (page as QR), Rotate, Bookmark (left to right)
+    float_ui::Box round[2];  // Share (page as QR), Bookmark (left to right)
   };
   FloatLayout floatLayout() const;
   void renderFloat();

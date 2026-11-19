@@ -2395,8 +2395,12 @@ void EpubReaderActivity::bookPageEstimate(const int currentPage, const int pageC
     learnedBytes += static_cast<uint32_t>(chapter);
     learnedPages += static_cast<uint32_t>(pageCount);
   }
-  if (learnedPages == 0) return;
-  const float bytesPerPage = static_cast<float>(learnedBytes) / static_cast<float>(learnedPages);
+  // Until a chapter is learned (it is still building, or short), this
+  // chapter's own density stands in.
+  const uint32_t bytes = learnedPages > 0 ? learnedBytes : static_cast<uint32_t>(chapter);
+  const uint32_t pages = learnedPages > 0 ? learnedPages : static_cast<uint32_t>(pageCount);
+  if (bytes == 0) return;
+  const float bytesPerPage = static_cast<float>(bytes) / static_cast<float>(pages);
   const size_t after = epub->getBookSize() - before - chapter;
   const int pagesBefore = static_cast<int>(static_cast<float>(before) / bytesPerPage + 0.5f);
   const int pagesAfter = static_cast<int>(static_cast<float>(after) / bytesPerPage + 0.5f);
@@ -2450,8 +2454,8 @@ EpubReaderActivity::FloatLayout EpubReaderActivity::floatLayout() const {
   FloatLayout layout;
   layout.close = {right - kButton, float_ui::kReaderEdge, kButton, kButton};
   layout.menu = {right - kButton, bottomY, kButton, kButton};
-  for (int i = 0; i < 3; i++) {
-    layout.round[i] = {right - (3 - i) * kButton - (2 - i) * float_ui::kGap, bottomY, kButton, kButton};
+  for (int i = 0; i < 2; i++) {
+    layout.round[i] = {right - (2 - i) * kButton - (1 - i) * float_ui::kGap, bottomY, kButton, kButton};
   }
   const int pillW = std::min(kFloatPillWidth, width - 2 * float_ui::kReaderMargin);
   int pillY = bottomY - float_ui::kGap - kButton;
@@ -2493,8 +2497,7 @@ void EpubReaderActivity::renderFloat() {
                        fill == float_ui::Fill::Dither);
   }
   float_ui::drawRound(renderer, layout.round[0], icon_float_share_28, fill);
-  float_ui::drawRound(renderer, layout.round[1], icon_float_rotate_28, fill);
-  float_ui::drawRound(renderer, layout.round[2], currentPageBookmarked ? icon_float_bookmarked_28 : icon_float_bookmark_28,
+  float_ui::drawRound(renderer, layout.round[1], currentPageBookmarked ? icon_float_bookmarked_28 : icon_float_bookmark_28,
                       fill);
 }
 
@@ -2546,18 +2549,6 @@ void EpubReaderActivity::handleFloatInput() {
   if (layout.round[0].contains(x, y)) {
     runFloatAction(MA::DISPLAY_QR);
   } else if (layout.round[1].contains(x, y)) {
-    // Portrait <-> landscape; the stored page is laid out for the old one.
-    {
-      RenderLock lock;
-      settleOverlayRefresh();
-    }
-    overlay = Overlay::None;
-    toolbarUi.reset();
-    discardOverlayPage();
-    applyOrientation(SETTINGS.orientation == CrossPointSettings::PORTRAIT ? CrossPointSettings::LANDSCAPE_CW
-                                                                          : CrossPointSettings::PORTRAIT);
-    requestUpdate();
-  } else if (layout.round[2].contains(x, y)) {
     runFloatAction(MA::TOGGLE_BOOKMARK);
   } else {
     closeOverlayToPage();
